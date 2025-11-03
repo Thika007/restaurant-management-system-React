@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expire Tracking</title>
+    <link href="../css/style.css" rel="stylesheet" />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    />
+  </head>
+  <body>
+    <div class="main-container">
+      <!-- Navbar -->
+      <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+          <a class="navbar-brand" href="#">
+            Restaurant Management System
+          </a>
+          <div class="navbar-nav ms-auto">
+            <button
+              id="notifBell"
+              class="btn btn-link position-relative me-3"
+              onclick="toggleNotifications()"
+            >
+              <i class="fas fa-bell"></i>
+              <span
+                id="notifBadge"
+                class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                style="display: none"
+                >0</span
+              >
+            </button>
+            <div class="nav-item dropdown">
+              <a
+                class="nav-link dropdown-toggle"
+                href="#"
+                id="userDropdown"
+                data-bs-toggle="dropdown"
+              >
+                <i class="fas fa-user me-1"></i>
+                <span id="userRole">User</span>
+              </a>
+              <ul class="dropdown-menu">
+                <li>
+                  <a class="dropdown-item" href="#" onclick="showSettings()"
+                    ><i class="fas fa-cog me-2"></i>Settings</a
+                  >
+                </li>
+                <li>
+                  <a
+                    class="dropdown-item admin-only"
+                    href="#"
+                    onclick="clearAllData()"
+                    ><i class="fas fa-trash-alt me-2"></i>Clear Data</a
+                  >
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <a class="dropdown-item" href="#" onclick="logout()"
+                    ><i class="fas fa-sign-out-alt me-2"></i>Logout</a
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <div class="content-wrapper">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+          <div class="position-sticky pt-3">
+            <ul class="nav flex-column">
+              <li class="nav-item">
+                <a class="nav-link" href="dashboard.html">
+                  <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="inventory.html">
+                  <i class="fas fa-boxes me-2"></i>Master Creation
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="add-stock.html">
+                  <i class="fas fa-plus-circle me-2"></i>Add Item Stock
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="internal-transfer.html">
+                  <i class="fas fa-exchange-alt me-2"></i>Internal Transfer
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="add-return.html">
+                  <i class="fas fa-undo me-2"></i>Add Return Stock
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="cash-management.html">
+                  <i class="fas fa-money-bill-wave me-2"></i>Cash Management
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="reports.html">
+                  <i class="fas fa-chart-bar me-2"></i>Reports
+                </a>
+              </li>
+              <li class="nav-item active">
+                <a class="nav-link" href="expire-tracking.html">
+                  <i class="fas fa-clock me-2"></i>Expire Tracking
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="branch-management.html">
+                  <i class="fas fa-store me-2"></i>Branch Management
+                </a>
+              </li>
+              <li class="nav-item admin-only">
+                <a class="nav-link" href="user-management.html">
+                  <i class="fas fa-users me-2"></i>User Management
+                </a>
+              </li>
+            </ul>
+          </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 main-content">
+          <h2 class="mt-4">
+            <i class="fas fa-clock me-2"></i>Expire Tracking
+          </h2>
+
+          <!-- Filters -->
+          <div class="filter-section card mb-3">
+            <div class="card-body">
+              <h5>Filter Options</h5>
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label">Branch</label>
+                  <select id="filterBranch" class="form-select">
+                    <option value="">All Branches</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Item</label>
+                  <input
+                    type="text"
+                    id="searchItem"
+                    class="form-control"
+                    placeholder="Search by item name..."
+                  />
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Days Until Expiry</label>
+                  <select id="filterExpiryDays" class="form-select">
+                    <option value="">All Items</option>
+                    <option value="3">Expiring in 3 days or less</option>
+                    <option value="7">Expiring in 7 days or less</option>
+                    <option value="14">Expiring in 14 days or less</option>
+                    <option value="30">Expiring in 30 days or less</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Type</label>
+                  <select id="filterType" class="form-select">
+                    <option value="all">All</option>
+                    <option value="expired">Expired Items</option>
+                    <option value="zero">0 Remaining Items</option>
+                    <option value="active">Not Expired</option>
+                    <option value="positive">Remaining > 0</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Expiry Table -->
+          <div class="card">
+            <div class="card-header">
+              <div class="d-flex justify-content-between align-items-center">
+                <span>Grocery Items Expiry Tracking</span>
+                <button
+                  class="btn btn-primary btn-sm"
+                  onclick="refreshExpiryTable()"
+                >
+                  <i class="fas fa-sync-alt me-1"></i>Refresh
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="alert alert-info" role="alert">
+                <i class="fas fa-info-circle me-2"></i>
+                Items are ordered by expiry date (soonest first). Expired items remain visible for 2 days, then are removed automatically.
+              </div>
+              <div class="table-responsive">
+                <table class="table table-hover">
+                  <thead>
+                    <tr>
+                      <th>Batch ID</th>
+                      <th>Item Name</th>
+                      <th>Branch</th>
+                      <th>Added Date</th>
+                      <th>Added Qty</th>
+                      <th>Remaining Qty</th>
+                      <th>Expiry Date</th>
+                      <th>Days Until Expiry</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="expiryTableBody">
+                    <tr>
+                      <td colspan="9" class="text-center text-muted">
+                        Loading...
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../js/common.js"></script>
+    <script src="../js/expire-tracking.js"></script>
+  </body>
+</html>
+

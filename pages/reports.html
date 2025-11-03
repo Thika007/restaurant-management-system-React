@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Restaurant Management - Reports</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    />
+  </head>
+  <body>
+     <div class="main-container">
+        <!-- Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">
+                    Restaurant Management System
+                </a>
+        <div class="navbar-nav ms-auto">
+                    <button id="notifBell" class="btn btn-link position-relative me-3" onclick="toggleNotifications()">
+                        <i class="fas fa-bell"></i>
+                        <span id="notifBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display:none;">0</span>
+                    </button>
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" data-bs-toggle="dropdown">
+                            <i class="fas fa-user me-1"></i> <span id="userRole">User</span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="showSettings()"><i class="fas fa-cog me-2"></i>Settings</a></li>
+                            <li><a class="dropdown-item admin-only" href="#" onclick="clearAllData()"><i class="fas fa-trash-alt me-2"></i>Clear Data</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="content-wrapper">
+            <!-- Sidebar -->
+            <nav class="sidebar">
+                <div class="position-sticky pt-3">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link" href="dashboard.html">
+                                <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="inventory.html">
+                                <i class="fas fa-boxes me-2"></i>Master Creation
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="add-stock.html">
+                                <i class="fas fa-plus-circle me-2"></i>Add Item Stock
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="internal-transfer.html">
+                                <i class="fas fa-exchange-alt me-2"></i>Internal Transfer
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="add-return.html">
+                                <i class="fas fa-undo me-2"></i>Add Return Stock
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="cash-management.html">
+                                <i class="fas fa-money-bill-wave me-2"></i>Cash Management
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link active" href="reports.html">
+                                <i class="fas fa-chart-bar me-2"></i>Reports
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="expire-tracking.html">
+                                <i class="fas fa-clock me-2"></i>Expire Tracking
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="branch-management.html">
+                                <i class="fas fa-store me-2"></i>Branch Management
+                            </a>
+                        </li>
+                        <li class="nav-item admin-only">
+                            <a class="nav-link" href="user-management.html">
+                                <i class="fas fa-users me-2"></i>User Management
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+
+        <div class="col-md-9 main-content">
+          <h2>Reports</h2>
+          <div class="filter-section card p-3">
+            <div class="row g-3">
+              <div class="col-md-2">
+                <label>From</label>
+                <input type="date" class="form-control" id="dateFrom" />
+              </div>
+              <div class="col-md-2">
+                <label>To</label>
+                <input type="date" class="form-control" id="dateTo" />
+              </div>
+              <div class="col-md-3">
+                <label>Branch</label>
+                <select class="form-select" id="reportBranch">
+                  <option>All Branches</option>
+                </select>
+              </div>
+              <div class="col-md-2">
+                <label>Report Type</label>
+                <select class="form-select" id="reportType">
+                  <option value="item">Item-wise Sales</option>
+                  <option value="branch">Branch-wise Sales</option>
+                  <option value="type">Type-wise Sales</option>
+                  <option value="returns">Returns</option>
+                  <option value="cash">Branch-wise Cash</option>
+                  <option value="zeroAdded">Zero Added Items</option>
+                  <option value="transfer">Internal Transfer</option>
+                  <option value="addedItems">Added Items</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label>Filter (Item / Type)</label>
+                <div class="d-flex gap-2">
+                  <select class="form-select" id="reportItem" title="Item"></select>
+                  <select class="form-select" id="reportItemType" title="Type">
+                    <option value="">All Types</option>
+                    <option value="Normal Item">Normal Item</option>
+                    <option value="Grocery Item">Grocery Item</option>
+                    <option value="Machine">Machine</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-12 d-flex justify-content-end gap-2">
+                <button class="btn btn-primary" onclick="generateReport()">Generate</button>
+                <button class="btn btn-success" onclick="exportExcel()"><i class="fas fa-file-excel me-1"></i>Export Excel</button>
+                <button class="btn btn-danger" onclick="exportPDF()"><i class="fas fa-file-pdf me-1"></i>Export PDF</button>
+              </div>
+            </div>
+          </div>
+          <div class="card mt-3">
+            <div class="card-header">Report Results</div>
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table" id="reportTable">
+                  <thead id="reportTableHead"></thead>
+                  <tbody id="reportTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../js/common.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+    <script src="../js/report.js"></script>
+  </body>
+</html>

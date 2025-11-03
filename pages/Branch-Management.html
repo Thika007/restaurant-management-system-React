@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Restaurant Management - Branch Management</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    />
+  </head>
+  <body>
+     <div class="main-container">
+        <!-- Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">
+                    Restaurant Management System
+                </a>
+                <div class="navbar-nav ms-auto">
+                    <button id="notifBell" class="btn btn-link position-relative me-3" onclick="toggleNotifications()">
+                        <i class="fas fa-bell"></i>
+                        <span id="notifBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display:none;">0</span>
+                    </button>
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" data-bs-toggle="dropdown">
+                            <i class="fas fa-user me-1"></i> <span id="userRole">User</span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="showSettings()"><i class="fas fa-cog me-2"></i>Settings</a></li>
+                            <li><a class="dropdown-item admin-only" href="#" onclick="clearAllData()"><i class="fas fa-trash-alt me-2"></i>Clear Data</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="content-wrapper">
+            <!-- Sidebar -->
+            <nav class="sidebar">
+                <div class="position-sticky pt-3">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link" href="dashboard.html">
+                                <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="inventory.html">
+                                <i class="fas fa-boxes me-2"></i>Master Creation
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="add-stock.html">
+                                <i class="fas fa-plus-circle me-2"></i>Add Item Stock
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="internal-transfer.html">
+                                <i class="fas fa-exchange-alt me-2"></i>Internal Transfer
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="add-return.html">
+                                <i class="fas fa-undo me-2"></i>Add Return Stock
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="cash-management.html">
+                                <i class="fas fa-money-bill-wave me-2"></i>Cash Management
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="reports.html">
+                                <i class="fas fa-chart-bar me-2"></i>Reports
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="expire-tracking.html">
+                                <i class="fas fa-clock me-2"></i>Expire Tracking
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link active" href="branch-management.html">
+                                <i class="fas fa-store me-2"></i>Branch Management
+                            </a>
+                        </li>
+                        <li class="nav-item admin-only">
+                            <a class="nav-link" href="user-management.html">
+                                <i class="fas fa-users me-2"></i>User Management
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+
+        <div class="col-md-9 main-content">
+          <h2>Branch Management</h2>
+          <button
+            class="btn btn-primary"
+            onclick="openAddBranchModal()"
+          >
+            Add New Branch
+          </button>
+          <div class="row mt-3" id="branchList">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Branch Modal -->
+    <div class="modal fade" id="addBranchModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="branchModalTitle">Add New Branch</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form onsubmit="event.preventDefault(); saveBranch();">
+              <input type="hidden" id="originalBranchName" value="" />
+              <div class="mb-3">
+                <label for="branchName">Branch Name</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="branchName"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="branchAddress">Address</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="branchAddress"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="managerName">Manager Name</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="managerName"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="branchPhone">Phone Number</label>
+                <input
+                  type="tel"
+                  class="form-control"
+                  id="branchPhone"
+                />
+              </div>
+              <div class="mb-3">
+                <label for="branchEmail">Email</label>
+                <input
+                  type="email"
+                  class="form-control"
+                  id="branchEmail"
+                />
+              </div>
+              <button type="submit" class="btn btn-primary" id="branchSubmitButton">Save Branch</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../js/script.js"></script>
+    <script src="../js/common.js"></script>
+    <script src="../js/branch-management.js"></script>
+  </body>
+</html>

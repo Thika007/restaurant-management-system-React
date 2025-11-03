@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Restaurant Management - User Management</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    />
+  </head>
+  <body>
+     <div class="main-container">
+        <!-- Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">
+                    Restaurant Management System
+                </a>
+                <div class="navbar-nav ms-auto">
+                    <button id="notifBell" class="btn btn-link position-relative me-3" onclick="toggleNotifications()">
+                        <i class="fas fa-bell"></i>
+                        <span id="notifBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display:none;">0</span>
+                    </button>
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" data-bs-toggle="dropdown">
+                            <i class="fas fa-user me-1"></i> <span id="userRole">User</span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="showSettings()"><i class="fas fa-cog me-2"></i>Settings</a></li>
+                            <li><a class="dropdown-item admin-only" href="#" onclick="clearAllData()"><i class="fas fa-trash-alt me-2"></i>Clear Data</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="content-wrapper">
+            <!-- Sidebar -->
+            <nav class="sidebar">
+                <div class="position-sticky pt-3">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link" href="dashboard.html">
+                                <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="inventory.html">
+                                <i class="fas fa-boxes me-2"></i>Master Creation
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="add-stock.html">
+                                <i class="fas fa-plus-circle me-2"></i>Add Item Stock
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="internal-transfer.html">
+                                <i class="fas fa-exchange-alt me-2"></i>Internal Transfer
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="add-return.html">
+                                <i class="fas fa-undo me-2"></i>Add Return Stock
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="cash-management.html">
+                                <i class="fas fa-money-bill-wave me-2"></i>Cash Management
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="reports.html">
+                                <i class="fas fa-chart-bar me-2"></i>Reports
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="expire-tracking.html">
+                                <i class="fas fa-clock me-2"></i>Expire Tracking
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="branch-management.html">
+                                <i class="fas fa-store me-2"></i>Branch Management
+                            </a>
+                        </li>
+                        <li class="nav-item admin-only">
+                            <a class="nav-link active" href="user-management.html">
+                                <i class="fas fa-users me-2"></i>User Management
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+
+        <div class="col-md-9 main-content">
+          <h2>User Management</h2>
+          <button
+            class="btn btn-primary"
+            data-bs-toggle="modal"
+            data-bs-target="#addUserModal"
+          >
+            Add New User
+          </button>
+          <table class="table mt-3">
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Username</th>
+                <th>Full Name</th>
+                <th>Accesses</th>
+                <th>Branches</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="userTableBody">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div class="modal fade" id="addUserModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Add New User</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form onsubmit="event.preventDefault(); addUser();">
+              <div class="mb-3">
+                <label for="userName">User name</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="userName"
+                  placeholder="Enter username"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="userEmail">Full name</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="userEmail"
+                  placeholder="Enter full name"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="userPassword">Password</label>
+                <input
+                  type="password"
+                  class="form-control"
+                  id="userPassword"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label>Access</label>
+                <div class="row row-cols-1 row-cols-md-2 g-2" id="accessCheckboxes">
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_dashboard" name="accesses" value="Dashboard"><label class="form-check-label" for="access_dashboard">Dashboard</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_inventory" name="accesses" value="Master Creation"><label class="form-check-label" for="access_inventory">Master Creation</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_add_stock" name="accesses" value="Add Item Stock"><label class="form-check-label" for="access_add_stock">Add Item Stock</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_internal_transfer" name="accesses" value="Internal Transfer"><label class="form-check-label" for="access_internal_transfer">Internal Transfer</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_add_return" name="accesses" value="Add Return Stock"><label class="form-check-label" for="access_add_return">Add Return Stock</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_cash" name="accesses" value="Cash Management"><label class="form-check-label" for="access_cash">Cash Management</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_reports" name="accesses" value="Reports"><label class="form-check-label" for="access_reports">Reports</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_expire_tracking" name="accesses" value="Expire Tracking"><label class="form-check-label" for="access_expire_tracking">Expire Tracking</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_branch" name="accesses" value="Branch Management"><label class="form-check-label" for="access_branch">Branch Management</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="access_users" name="accesses" value="User Management"><label class="form-check-label" for="access_users">User Management</label></div></div>
+                </div>
+              </div>
+              <div class="mb-3">
+                <label>Assigned Branches</label>
+                <div id="branchCheckboxes" class="row row-cols-1 row-cols-md-2 g-2">
+                  <!-- Branch checkboxes populated via JS -->
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary">Save User</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div class="modal fade" id="editUserModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Edit User</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form onsubmit="event.preventDefault(); updateUser();">
+              <input type="hidden" id="editUserId" />
+              <div class="mb-3">
+                <label for="editUserName">Username</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="editUserName"
+                  placeholder="Enter username"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="editFullName">Full name</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="editFullName"
+                  placeholder="Enter full name"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="editPassword">Password</label>
+                <input
+                  type="password"
+                  class="form-control"
+                  id="editPassword"
+                  placeholder="Leave blank to keep current password"
+                />
+                <small class="text-muted">Leave blank if you don't want to change the password</small>
+              </div>
+              <div class="mb-3">
+                <label>Access</label>
+                <div class="row row-cols-1 row-cols-md-2 g-2" id="editAccessCheckboxes">
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_dashboard" name="editAccesses" value="Dashboard"><label class="form-check-label" for="edit_access_dashboard">Dashboard</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_inventory" name="editAccesses" value="Master Creation"><label class="form-check-label" for="edit_access_inventory">Master Creation</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_add_stock" name="editAccesses" value="Add Item Stock"><label class="form-check-label" for="edit_access_add_stock">Add Item Stock</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_internal_transfer" name="editAccesses" value="Internal Transfer"><label class="form-check-label" for="edit_access_internal_transfer">Internal Transfer</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_add_return" name="editAccesses" value="Add Return Stock"><label class="form-check-label" for="edit_access_add_return">Add Return Stock</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_cash" name="editAccesses" value="Cash Management"><label class="form-check-label" for="edit_access_cash">Cash Management</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_reports" name="editAccesses" value="Reports"><label class="form-check-label" for="edit_access_reports">Reports</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_expire_tracking" name="editAccesses" value="Expire Tracking"><label class="form-check-label" for="edit_access_expire_tracking">Expire Tracking</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_branch" name="editAccesses" value="Branch Management"><label class="form-check-label" for="edit_access_branch">Branch Management</label></div></div>
+                  <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" id="edit_access_users" name="editAccesses" value="User Management"><label class="form-check-label" for="edit_access_users">User Management</label></div></div>
+                </div>
+              </div>
+              <div class="mb-3">
+                <label>Assigned Branches</label>
+                <div id="editBranchCheckboxes" class="row row-cols-1 row-cols-md-2 g-2">
+                  <!-- Branch checkboxes populated via JS -->
+                </div>
+              </div>
+              <div class="mb-3">
+                <label>Status</label>
+                <select class="form-select" id="editUserStatus" required>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-primary">Update User</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../js/script.js"></script>
+    <script src="../js/common.js"></script>
+    <script src="../js/user-management.js"></script>
+  </body>
+</html>
