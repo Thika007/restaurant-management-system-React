@@ -118,6 +118,7 @@ function checkLogin() {
     'add-return.html': 'Add Return Stock',
     'cash-management.html': 'Cash Management',
     'reports.html': 'Reports',
+    'expire-tracking.html': 'Expire Tracking',
     'branch-management.html': 'Branch Management',
     'user-management.html': 'User Management'
   };
@@ -230,12 +231,41 @@ function loadBranchesForDropdowns() {
       }
   });
 
-  // Dashboard branch: no "All Branches"; force selection
+  // Dashboard branch: 
+  // - For admin: show "All Branches" option
+  // - For non-admin: hide dropdown if only one branch, show dropdown if multiple branches (no "All Branches")
   const dash = document.getElementById('dashBranch');
   if (dash) {
-    let options = '<option value="">Select Branch</option>';
-    branches.forEach(branch => options += `<option value="${branch.name}">${branch.name}</option>`);
-    dash.innerHTML = options;
+    if (role === 'admin') {
+      // Admin sees all branches with "All Branches" option
+      let options = '<option value="All Branches">All Branches</option>';
+      branches.forEach(branch => options += `<option value="${branch.name}">${branch.name}</option>`);
+      dash.innerHTML = options;
+      // Set default to "All Branches" if nothing selected
+      if (!dash.value) {
+        dash.value = 'All Branches';
+      }
+    } else if (branches.length === 1) {
+      // Non-admin with single branch: hide dropdown, auto-select branch
+      dash.style.display = 'none';
+      dash.value = branches[0].name;
+      // Show branch name as badge instead
+      const branchBadge = document.createElement('span');
+      branchBadge.className = 'badge bg-primary p-2 ms-2';
+      branchBadge.innerHTML = `<i class="fas fa-store me-1"></i>${branches[0].name}`;
+      if (dash.parentElement) {
+        dash.parentElement.insertBefore(branchBadge, dash.nextSibling);
+      }
+    } else {
+      // Non-admin with multiple branches: show dropdown without "All Branches"
+      let options = '<option value="">Select Branch</option>';
+      branches.forEach(branch => options += `<option value="${branch.name}">${branch.name}</option>`);
+      dash.innerHTML = options;
+      // Auto-select first branch if nothing selected
+      if (!dash.value) {
+        dash.value = branches[0].name;
+      }
+    }
   }
 }
 

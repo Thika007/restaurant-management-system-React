@@ -469,7 +469,7 @@ const Layout = () => {
                   </NavLink>
                 </li>
               )}
-              {canAccess('Dashboard') && (
+              {canAccess('Expire Tracking') && (
                 <li className="nav-item">
                   <NavLink to="/expire-tracking" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
                     <i className="fas fa-clock me-2"></i>Expire Tracking
@@ -504,7 +504,14 @@ const Layout = () => {
             <Route path="/add-return" element={<AddReturn />} />
             <Route path="/cash-management" element={<CashManagement />} />
             <Route path="/reports" element={<Reports />} />
-            <Route path="/expire-tracking" element={<ExpireTracking />} />
+            <Route 
+              path="/expire-tracking" 
+              element={
+                user?.role === 'admin' || (user?.accesses && user.accesses.includes('Expire Tracking')) 
+                  ? <ExpireTracking /> 
+                  : <Navigate to="/dashboard" replace />
+              } 
+            />
             <Route path="/branch-management" element={<BranchManagement />} />
             <Route path="/user-management" element={<UserManagement />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />

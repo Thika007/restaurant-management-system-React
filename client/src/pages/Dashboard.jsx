@@ -18,7 +18,14 @@ const Dashboard = () => {
     stockValueGrocery: 0,
     machineSalesCash: 0
   });
-  const [branch, setBranch] = useState('');
+  // Initialize branch state based on user role
+  const [branch, setBranch] = useState(() => {
+    // For non-admin users with assigned branches, auto-select first branch
+    if (user && user.role !== 'admin' && user.assignedBranches && user.assignedBranches.length > 0) {
+      return user.assignedBranches[0];
+    }
+    return '';
+  });
   const [dateFrom, setDateFrom] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() - 7);
@@ -475,17 +482,26 @@ const Dashboard = () => {
         <h1 className="h2">Dashboard</h1>
         <div className="btn-toolbar mb-2 mb-md-0">
           <div className="d-flex flex-wrap gap-2 align-items-center">
-            <select 
-              className="form-select" 
-              style={{ width: 'auto' }}
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-            >
-              <option value="">All Branches</option>
-              {availableBranches.map(b => (
-                <option key={b.name} value={b.name}>{b.name}</option>
-              ))}
-            </select>
+            {/* Show branch dropdown only for admin users or users with multiple branches */}
+            {(user?.role === 'admin' || availableBranches.length > 1) && (
+              <select 
+                className="form-select" 
+                style={{ width: 'auto' }}
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+              >
+                {user?.role === 'admin' && <option value="">All Branches</option>}
+                {availableBranches.map(b => (
+                  <option key={b.name} value={b.name}>{b.name}</option>
+                ))}
+              </select>
+            )}
+            {/* Show branch name for non-admin users with single branch */}
+            {user?.role !== 'admin' && availableBranches.length === 1 && (
+              <div className="badge bg-primary p-2">
+                <i className="fas fa-store me-1"></i>{availableBranches[0].name}
+              </div>
+            )}
             <div className="d-flex align-items-center gap-2">
               <label className="mb-0 fw-semibold">From:</label>
               <input 
