@@ -42,10 +42,15 @@ const CashManagement = () => {
     }
   }, [filterBranch, filterDate, branches]);
 
-  // Check for existing entry when branch/date changes
+  // Modal states for validation warnings
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validationMessage, setValidationMessage] = useState('');
+
+  // Check for existing entry and validate preconditions when branch/date changes
   useEffect(() => {
     if (formData.branch && formData.date) {
       checkExistingEntry();
+      validatePreconditionsOnChange(formData.branch, formData.date);
     } else {
       setExistingEntry(false);
     }
@@ -96,21 +101,57 @@ const CashManagement = () => {
     }
   };
 
-  const validatePreconditions = async (branch, date) => {
+  // Validate preconditions when branch/date changes (for real-time feedback)
+  const validatePreconditionsOnChange = async (branch, date) => {
+    if (!branch || !date) return;
+    
     try {
       // Check if normal items exist and if batch is finished
-      const stocksRes = await stocksAPI.get({ branch, date, itemType: 'Normal Item' });
+      const stocksRes = await stocksAPI.get({ branch, date });
       if (stocksRes.data.success && stocksRes.data.stocks && stocksRes.data.stocks.length > 0) {
         // There are normal items, check if batch is finished
         if (!stocksRes.data.isFinished) {
-          return { ok: false, message: 'Please finish the Normal Items batch before saving cash entry.' };
+          const message = `Cannot create cash entry: ${branch} has Normal Items added but the batch is not finished for ${date}. Please finish the batch before creating a cash entry.`;
+          setValidationMessage(message);
+          setShowValidationModal(true);
+          return;
         }
       }
 
       // Check for active machine batches
       const machinesRes = await machinesAPI.getBatches({ branch, date, status: 'active' });
       if (machinesRes.data.success && machinesRes.data.batches && machinesRes.data.batches.length > 0) {
-        return { ok: false, message: 'Please finish active machine batches before cash entry.' };
+        const message = `Cannot create cash entry: ${branch} has Machine batches started but not finished for ${date}. Please enter end values and finish the machine batches before creating a cash entry.`;
+        setValidationMessage(message);
+        setShowValidationModal(true);
+        return;
+      }
+
+      // Clear validation modal if all checks pass
+      setShowValidationModal(false);
+      setValidationMessage('');
+    } catch (error) {
+      console.error('Validate preconditions on change error:', error);
+      // Don't show error on validation failure - allow user to proceed
+    }
+  };
+
+  // Validate preconditions before saving (same checks, for form submission)
+  const validatePreconditions = async (branch, date) => {
+    try {
+      // Check if normal items exist and if batch is finished
+      const stocksRes = await stocksAPI.get({ branch, date });
+      if (stocksRes.data.success && stocksRes.data.stocks && stocksRes.data.stocks.length > 0) {
+        // There are normal items, check if batch is finished
+        if (!stocksRes.data.isFinished) {
+          return { ok: false, message: `Cannot create cash entry: ${branch} has Normal Items added but the batch is not finished for ${date}. Please finish the batch before creating a cash entry.` };
+        }
+      }
+
+      // Check for active machine batches
+      const machinesRes = await machinesAPI.getBatches({ branch, date, status: 'active' });
+      if (machinesRes.data.success && machinesRes.data.batches && machinesRes.data.batches.length > 0) {
+        return { ok: false, message: `Cannot create cash entry: ${branch} has Machine batches started but not finished for ${date}. Please enter end values and finish the machine batches before creating a cash entry.` };
       }
 
       return { ok: true };
@@ -145,7 +186,8 @@ const CashManagement = () => {
     // Validate preconditions
     const precheck = await validatePreconditions(formData.branch, formData.date);
     if (!precheck.ok) {
-      alert(precheck.message);
+      setValidationMessage(precheck.message);
+      setShowValidationModal(true);
       return;
     }
 
@@ -373,20 +415,88 @@ const CashManagement = () => {
         </div>
       )}
 
-      {/* Add Cash Entry Modal */}
-      {showAddModal && (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} tabIndex="-1">
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Add Cash Entry</h5>
+      {/* Validation Warning Modal */}
+      {showValidationModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1055 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content border-danger">
+              <div className="modal-header bg-danger text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-exclamation-triangle me-2"></i>Cannot Create Cash Entry
+                </h5>
                 <button
                   type="button"
-                  className="btn-close"
-                  onClick={closeAddModal}
+                  className="btn-close btn-close-white"
+                  onClick={() => {
+                    setShowValidationModal(false);
+                    setValidationMessage('');
+                  }}
                 ></button>
               </div>
               <div className="modal-body">
+                <div className="d-flex align-items-start mb-3">
+                  <i className="fas fa-info-circle fa-2x text-danger me-3 mt-1"></i>
+                  <p className="mb-0 fs-5">{validationMessage}</p>
+                </div>
+                <div className="alert alert-danger mb-0">
+                  <i className="fas fa-lightbulb me-2"></i>
+                  <strong>Required Actions:</strong>
+                  <ul className="mb-0 mt-2">
+                    <li>For Normal Items: Go to "Add Return Stock" page and click "Finish Batch" for the selected branch and date.</li>
+                    <li>For Machine Items: Go to "Add Return Stock" page, enter end values, and click "Finish Batch" for each machine.</li>
+                  </ul>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => {
+                    setShowValidationModal(false);
+                    setValidationMessage('');
+                  }}
+                >
+                  <i className="fas fa-check me-1"></i>Understood
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Cash Entry Slide-in Form */}
+      {showAddModal && (
+        <>
+          {/* Backdrop */}
+          <div 
+            className="position-fixed top-0 start-0 w-100 h-100" 
+            style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1040 }}
+            onClick={closeAddModal}
+          ></div>
+          
+          {/* Slide-in Panel from Right */}
+          <div 
+            className="position-fixed top-0 end-0 h-100 bg-white shadow-lg"
+            style={{ 
+              width: '450px', 
+              maxWidth: '90vw',
+              zIndex: 1050,
+              animation: 'slideInRight 0.3s ease-out',
+              overflowY: 'auto'
+            }}
+          >
+            <div className="d-flex flex-column h-100">
+              <div className="modal-header bg-primary text-white">
+                <h5 className="modal-title mb-0">
+                  <i className="fas fa-money-bill-wave me-2"></i>Add Cash Entry
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeAddModal}
+                ></button>
+              </div>
+              <div className="modal-body flex-grow-1 p-4">
                 <form onSubmit={handleAddCashEntry}>
                   <div className="mb-3">
                     <label htmlFor="cashBranch" className="form-label">
@@ -484,7 +594,19 @@ const CashManagement = () => {
               </div>
             </div>
           </div>
-        </div>
+          
+          {/* Add CSS animation */}
+          <style>{`
+            @keyframes slideInRight {
+              from {
+                transform: translateX(100%);
+              }
+              to {
+                transform: translateX(0);
+              }
+            }
+          `}</style>
+        </>
       )}
     </div>
   );

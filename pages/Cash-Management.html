@@ -13,6 +13,33 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
     />
+    <style>
+      /* Slide-in modal from right */
+      .modal-dialog-slide-right {
+        position: fixed;
+        top: 0;
+        right: 0;
+        margin: 0;
+        width: 450px;
+        max-width: 90vw;
+        height: 100vh;
+        transform: translateX(100%);
+        transition: transform 0.3s ease-out;
+      }
+      .modal.show .modal-dialog-slide-right {
+        transform: translateX(0);
+      }
+      .modal-dialog-slide-right .modal-content {
+        border-radius: 0;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      .modal-dialog-slide-right .modal-body {
+        flex: 1;
+        overflow-y: auto;
+      }
+    </style>
   </head>
   <body>
      <div class="main-container">
@@ -166,14 +193,49 @@
     </div>
 
     <!-- Add Cash Entry Modal -->
+    <!-- Cash Validation Warning Modal -->
+    <div class="modal fade" id="cashValidationModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-danger">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="fas fa-exclamation-triangle me-2"></i>Cannot Create Cash Entry
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex align-items-start mb-3">
+                        <i class="fas fa-info-circle fa-2x text-danger me-3 mt-1"></i>
+                        <p class="mb-0 fs-5" id="cashValidationMessage"></p>
+                    </div>
+                    <div class="alert alert-danger mb-0">
+                        <i class="fas fa-lightbulb me-2"></i>
+                        <strong>Required Actions:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>For Normal Items: Go to "Add Return Stock" page and click "Finish Batch" for the selected branch and date.</li>
+                            <li>For Machine Items: Go to "Add Return Stock" page, enter end values, and click "Finish Batch" for each machine.</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" data-bs-dismiss="modal">
+                        <i class="fas fa-check me-1"></i>Understood
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade" id="addCashModal" tabindex="-1">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Add Cash Entry</h5>
+      <div class="modal-dialog modal-dialog-slide-right">
+        <div class="modal-content h-100">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title mb-0">
+              <i class="fas fa-money-bill-wave me-2"></i>Add Cash Entry
+            </h5>
             <button
               type="button"
-              class="btn-close"
+              class="btn-close btn-close-white"
               data-bs-dismiss="modal"
             ></button>
           </div>

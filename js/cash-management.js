@@ -212,6 +212,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (el) el.addEventListener('change', loadCashEntries);
       });
 
+      // Validate preconditions when branch/date changes in cash entry form
+      const cashBranchEl = document.getElementById('cashBranch');
+      const cashDateEl = document.getElementById('cashDate');
+      if (cashBranchEl && cashDateEl) {
+        const validateOnChange = () => {
+          const branch = cashBranchEl.value;
+          const date = cashDateEl.value;
+          if (branch && date) {
+            validateCashPreconditionsOnChange(branch, date);
+          }
+        };
+        cashBranchEl.addEventListener('change', validateOnChange);
+        cashDateEl.addEventListener('change', validateOnChange);
+      }
+
       loadCashEntries();
       
       // Non-admins should not see reconciliation table, handled in loadCashEntries
@@ -287,16 +302,31 @@ function validateCashPreconditions(branch, date) {
   const machineBatches = JSON.parse(localStorage.getItem('machineBatches')) || [];
   const hasActiveMachine = machineBatches.some(b => b.branch === branch && b.date === date && b.status === 'active');
 
-  // Returns completed check: ensure all return forms saved for that date (proxy by presence of any returns with that date imply handled)
-  const groceryReturns = JSON.parse(localStorage.getItem('groceryReturns')) || [];
-  const returnsOk = groceryReturns.filter(r => r.branch === branch && r.date === date).every(r => r.completed === true || r.returnedQty >= 0);
-
   // Normal items: only enforce finish if any normal items were added
-  if (hasAnyNormal && !normalBatchFinished) return { ok: false, message: 'Please finish the Normal Items batch before saving cash entry.' };
-  // Grocery updates requirement removed: grocery activity is not mandatory for cash entry
+  if (hasAnyNormal && !normalBatchFinished) {
+    return { 
+      ok: false, 
+      message: `Cannot create cash entry: ${branch} has Normal Items added but the batch is not finished for ${date}. Please finish the batch before creating a cash entry.` 
+    };
+  }
+  
   // Machine: only block when a machine is started but not yet ended
-  if (hasActiveMachine) return { ok: false, message: 'Please finish active machine batches before cash entry.' };
-  if (!returnsOk) return { ok: false, message: 'Please complete all return sections for the day.' };
+  if (hasActiveMachine) {
+    return { 
+      ok: false, 
+      message: `Cannot create cash entry: ${branch} has Machine batches started but not finished for ${date}. Please enter end values and finish the machine batches before creating a cash entry.` 
+    };
+  }
 
   return { ok: true };
+}
+
+// Validate preconditions when branch/date changes (for real-time feedback)
+function validateCashPreconditionsOnChange(branch, date) {
+  if (!branch || !date) return;
+  
+  const precheck = validateCashPreconditions(branch, date);
+  if (!precheck.ok) {
+    showCashValidationModal(precheck.message);
+  }
 }
