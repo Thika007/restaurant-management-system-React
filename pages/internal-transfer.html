@@ -178,6 +178,36 @@
         </div>
     </div>
 
+    <!-- Batch Finished Warning Modal -->
+    <div class="modal fade" id="batchFinishedModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-warning">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title">
+                        <i class="fas fa-exclamation-triangle me-2"></i>Batch Finished
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <i class="fas fa-info-circle fa-2x text-warning me-3"></i>
+                        <p class="mb-0 fs-5" id="batchFinishedMessage"></p>
+                    </div>
+                    <div class="alert alert-warning mb-0">
+                        <i class="fas fa-lightbulb me-2"></i>
+                        <strong>Note:</strong> Once a batch is finished, all items are considered sold or returned. 
+                        You cannot transfer items from a finished batch.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-warning" data-bs-dismiss="modal">
+                        <i class="fas fa-check me-1"></i>Understood
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Transfer Confirmation Modal -->
     <div class="modal fade" id="transferConfirmModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg">

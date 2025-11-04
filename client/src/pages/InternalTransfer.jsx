@@ -25,6 +25,8 @@ const InternalTransfer = () => {
   // Modal states
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [transferData, setTransferData] = useState(null);
+  const [showBatchFinishedModal, setShowBatchFinishedModal] = useState(false);
+  const [batchFinishedMessage, setBatchFinishedMessage] = useState('');
   
   // Get available branches based on user role
   const getAvailableBranches = () => {
@@ -77,21 +79,38 @@ const InternalTransfer = () => {
       const today = new Date().toISOString().split('T')[0];
       
       if (selectedType === 'Normal Item') {
-        // Load normal item stocks for both branches
-        const [senderRes, receiverRes] = await Promise.all([
+        // Check if batch is finished for either branch - if so, block transfer
+        const [senderCheck, receiverCheck] = await Promise.all([
           stocksAPI.get({ date: today, branch: senderBranch }),
           stocksAPI.get({ date: today, branch: receiverBranch })
         ]);
 
-        if (senderRes.data.success && receiverRes.data.success) {
+        if (senderCheck.data.isFinished) {
+          setBatchFinishedMessage(`Cannot transfer: ${senderBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
+          setShowBatchFinishedModal(true);
+          setStocks([]);
+          setTransferQuantities({});
+          return;
+        }
+
+        if (receiverCheck.data.isFinished) {
+          setBatchFinishedMessage(`Cannot transfer: ${receiverBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
+          setShowBatchFinishedModal(true);
+          setStocks([]);
+          setTransferQuantities({});
+          return;
+        }
+
+        // Load normal item stocks for both branches
+        if (senderCheck.data.success && receiverCheck.data.success) {
           // Add branch information to each stock since API doesn't return it
-          const senderStocks = senderRes.data.stocks.map(stock => ({
+          const senderStocks = senderCheck.data.stocks.map(stock => ({
             ...stock,
             branch: senderBranch,
             date: today
           }));
           
-          const receiverStocks = receiverRes.data.stocks.map(stock => ({
+          const receiverStocks = receiverCheck.data.stocks.map(stock => ({
             ...stock,
             branch: receiverBranch,
             date: today
@@ -172,10 +191,12 @@ const InternalTransfer = () => {
     return Math.max(0, available);
   };
 
-  // Get stock for grocery item
+  // Get stock for grocery item - use remaining (after sales/returns), not quantity
   const getGroceryItemStock = (itemCode, branch) => {
+    if (!groceryStocks || groceryStocks.length === 0) return 0;
     const itemStocks = groceryStocks.filter(s => s.itemCode === itemCode && s.branch === branch);
-    return itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || s.quantity || 0), 0);
+    // Use remaining field (current available stock after sales/returns), not quantity (original added stock)
+    return itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
   };
 
   // Update transfer preview
@@ -450,69 +471,135 @@ const InternalTransfer = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredItems.map(item => {
-                    const senderStock = selectedType === 'Normal Item'
-                      ? getNormalItemStock(item.code, senderBranch)
-                      : getGroceryItemStock(item.code, senderBranch);
-                    
-                    const receiverStock = selectedType === 'Normal Item'
-                      ? getNormalItemStock(item.code, receiverBranch)
-                      : getGroceryItemStock(item.code, receiverBranch);
-                    
-                    const transferQty = selectedType === 'Normal Item'
-                      ? (parseInt(transferQuantities[item.code]) || 0)
-                      : (parseFloat(transferQuantities[item.code]) || 0);
-                    
-                    const updatedStock = receiverStock + transferQty;
-                    const displayUpdated = item.soldByWeight 
-                      ? Number(updatedStock).toFixed(3) 
-                      : Math.trunc(updatedStock);
-                    
-                    return (
-                      <tr key={item.code}>
-                        <td>{item.name}</td>
-                        <td>{item.category}</td>
-                        <td>Rs {parseFloat(item.price).toFixed(2)}</td>
-                        <td>
-                          <span className="badge bg-primary">
-                            {item.soldByWeight 
-                              ? Number(senderStock).toFixed(3) 
-                              : Math.trunc(senderStock)}
-                          </span>
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            className="form-control"
-                            value={transferQuantities[item.code] || ''}
-                            onChange={(e) => handleQuantityChange(item.code, e.target.value)}
-                            min="0"
-                            max={senderStock}
-                            step={item.soldByWeight ? "0.001" : "1"}
-                            placeholder="0"
-                          />
-                        </td>
-                        <td>
-                          <span className="badge bg-secondary">
-                            {item.soldByWeight 
-                              ? Number(receiverStock).toFixed(3) 
-                              : Math.trunc(receiverStock)}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="badge bg-success" id={`updated-${item.code}`}>
-                            {displayUpdated}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {(() => {
+                    // Filter items to only show those with sender stock > 0
+                    const itemsWithStock = filteredItems.filter(item => {
+                      const senderStock = selectedType === 'Normal Item'
+                        ? getNormalItemStock(item.code, senderBranch)
+                        : getGroceryItemStock(item.code, senderBranch);
+                      return senderStock > 0;
+                    });
+
+                    if (itemsWithStock.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan="7" className="text-center text-warning">
+                            No items with available stock for transfer.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return itemsWithStock.map(item => {
+                      const senderStock = selectedType === 'Normal Item'
+                        ? getNormalItemStock(item.code, senderBranch)
+                        : getGroceryItemStock(item.code, senderBranch);
+                      
+                      const receiverStock = selectedType === 'Normal Item'
+                        ? getNormalItemStock(item.code, receiverBranch)
+                        : getGroceryItemStock(item.code, receiverBranch);
+                      
+                      const transferQty = selectedType === 'Normal Item'
+                        ? (parseInt(transferQuantities[item.code]) || 0)
+                        : (parseFloat(transferQuantities[item.code]) || 0);
+                      
+                      const updatedStock = receiverStock + transferQty;
+                      const displayUpdated = item.soldByWeight 
+                        ? Number(updatedStock).toFixed(3) 
+                        : Math.trunc(updatedStock);
+                      
+                      return (
+                        <tr key={item.code}>
+                          <td>{item.name}</td>
+                          <td>{item.category}</td>
+                          <td>Rs {parseFloat(item.price).toFixed(2)}</td>
+                          <td>
+                            <span className="badge bg-primary">
+                              {item.soldByWeight 
+                                ? Number(senderStock).toFixed(3) 
+                                : Math.trunc(senderStock)}
+                            </span>
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              className="form-control"
+                              value={transferQuantities[item.code] || ''}
+                              onChange={(e) => handleQuantityChange(item.code, e.target.value)}
+                              min="0"
+                              max={senderStock}
+                              step={item.soldByWeight ? "0.001" : "1"}
+                              placeholder="0"
+                            />
+                          </td>
+                          <td>
+                            <span className="badge bg-secondary">
+                              {item.soldByWeight 
+                                ? Number(receiverStock).toFixed(3) 
+                                : Math.trunc(receiverStock)}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="badge bg-success" id={`updated-${item.code}`}>
+                              {displayUpdated}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
           )}
         </div>
       </div>
+
+      {/* Batch Finished Warning Modal */}
+      {showBatchFinishedModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1055 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content border-warning">
+              <div className="modal-header bg-warning text-dark">
+                <h5 className="modal-title">
+                  <i className="fas fa-exclamation-triangle me-2"></i>Batch Finished
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => {
+                    setShowBatchFinishedModal(false);
+                    setBatchFinishedMessage('');
+                  }}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="d-flex align-items-center mb-3">
+                  <i className="fas fa-info-circle fa-2x text-warning me-3"></i>
+                  <p className="mb-0 fs-5">{batchFinishedMessage}</p>
+                </div>
+                <div className="alert alert-warning mb-0">
+                  <i className="fas fa-lightbulb me-2"></i>
+                  <strong>Note:</strong> Once a batch is finished, all items are considered sold or returned. 
+                  You cannot transfer items from a finished batch.
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-warning"
+                  onClick={() => {
+                    setShowBatchFinishedModal(false);
+                    setBatchFinishedMessage('');
+                  }}
+                >
+                  <i className="fas fa-check me-1"></i>Understood
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transfer Confirmation Modal */}
       {showConfirmModal && transferData && (

@@ -88,12 +88,12 @@ function loadTransferItems() {
         const receiverKey = `${today}_${receiverBranch}`;
         
         if (finishedBatches[senderKey]) {
-            showTransferMessage(`Cannot transfer: ${senderBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
+            showBatchFinishedModal(`Cannot transfer: ${senderBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
             return;
         }
         
         if (finishedBatches[receiverKey]) {
-            showTransferMessage(`Cannot transfer: ${receiverBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
+            showBatchFinishedModal(`Cannot transfer: ${receiverBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
             return;
         }
     }
@@ -118,6 +118,16 @@ function showTransferMessage(message) {
             <p>${message}</p>
         </div>
     `;
+}
+
+// Show batch finished modal
+function showBatchFinishedModal(message) {
+    const messageElement = document.getElementById('batchFinishedMessage');
+    if (messageElement) {
+        messageElement.textContent = message;
+    }
+    const modal = new bootstrap.Modal(document.getElementById('batchFinishedModal'));
+    modal.show();
 }
 
 // Render transfer table
@@ -157,15 +167,16 @@ function renderNormalItemTransferTable(items, senderBranch, receiverBranch) {
                 <tbody>
     `;
     
-    items.forEach(item => {
+    const normalRows = items.map(item => {
         const senderStockData = stocks[senderKey]?.[item.code];
         const receiverStockData = stocks[receiverKey]?.[item.code];
         
         // Extract actual stock values from the stock data structure
         const senderStock = senderStockData ? (Number(senderStockData.added) || 0) - (Number(senderStockData.returned) || 0) - (Number(senderStockData.transferred) || 0) : 0;
+        if (senderStock <= 0) return '';
         const receiverStock = receiverStockData ? (Number(receiverStockData.added) || 0) - (Number(receiverStockData.returned) || 0) - (Number(receiverStockData.transferred) || 0) : 0;
         
-        tableHTML += `
+        return `
             <tr>
                 <td>${item.name}</td>
                 <td>${item.category}</td>
@@ -187,7 +198,17 @@ function renderNormalItemTransferTable(items, senderBranch, receiverBranch) {
                 <td><span class="badge bg-success" id="updated-${item.code}">${receiverStock}</span></td>
             </tr>
         `;
-    });
+    }).filter(Boolean);
+
+    if (normalRows.length === 0) {
+        tableHTML += `
+            <tr>
+                <td colspan="7" class="text-center text-warning">No items with available stock for transfer.</td>
+            </tr>
+        `;
+    } else {
+        tableHTML += normalRows.join('');
+    }
     
     tableHTML += `
                 </tbody>
@@ -221,14 +242,16 @@ function renderGroceryItemTransferTable(items, senderBranch, receiverBranch) {
                 <tbody>
     `;
     
-    items.forEach(item => {
+    const groceryRows = items.map(item => {
         const senderStockData = groceryStocks.filter(s => s.itemCode === item.code && s.branch === senderBranch);
         const receiverStockData = groceryStocks.filter(s => s.itemCode === item.code && s.branch === receiverBranch);
         
-        const senderStock = senderStockData.reduce((sum, s) => sum + (s.remaining ?? s.quantity), 0);
-        const receiverStock = receiverStockData.reduce((sum, s) => sum + (s.remaining ?? s.quantity), 0);
+        // Use remaining field (current available stock after sales/returns), not quantity (original added stock)
+        const senderStock = senderStockData.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
+        if (senderStock <= 0) return '';
+        const receiverStock = receiverStockData.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
         
-        tableHTML += `
+        return `
             <tr>
                 <td>${item.name}</td>
                 <td>${item.category}</td>
@@ -252,7 +275,17 @@ function renderGroceryItemTransferTable(items, senderBranch, receiverBranch) {
                 <td><span class="badge bg-success" id="updated-${item.code}">${item.soldByWeight ? Number(receiverStock).toFixed(3) : Math.trunc(receiverStock)}</span></td>
             </tr>
         `;
-    });
+    }).filter(Boolean);
+
+    if (groceryRows.length === 0) {
+        tableHTML += `
+            <tr>
+                <td colspan="7" class="text-center text-warning">No grocery items with available stock for transfer.</td>
+            </tr>
+        `;
+    } else {
+        tableHTML += groceryRows.join('');
+    }
     
     tableHTML += `
                 </tbody>
@@ -331,12 +364,12 @@ function processTransfer() {
         const receiverKey = `${today}_${receiverBranch}`;
         
         if (finishedBatches[senderKey]) {
-            showNotification(`Cannot process transfer: ${senderBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`, 'error');
+            showBatchFinishedModal(`Cannot transfer: ${senderBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
             return;
         }
         
         if (finishedBatches[receiverKey]) {
-            showNotification(`Cannot process transfer: ${receiverBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`, 'error');
+            showBatchFinishedModal(`Cannot transfer: ${receiverBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
             return;
         }
     }
