@@ -323,18 +323,43 @@ function generateReport() {
       }
     });
 
-    // Grocery Items
+    // Grocery Items - include ALL grocery stock additions
     const groceryAgg = {};
-    // Start with added batches
+    // Start with added batches - ensure all stocks are included
     (groceryStocks || []).forEach(s => {
-      if (
-        (!dateFrom || s.date >= dateFrom || s.addedDate >= dateFrom) &&
-        (!dateTo || s.date <= dateTo || s.addedDate <= dateTo) &&
-        (branch === 'All Branches' || s.branch === branch)
-      ) {
-        const d = s.date || s.addedDate || '';
-        const keyAgg = `${d}|${s.branch}|${s.itemCode}`;
-        if (!groceryAgg[keyAgg]) groceryAgg[keyAgg] = { date: d, branch: s.branch, itemCode: s.itemCode, added: 0, returned: 0, transferred: 0 };
+      // Use addedDate first (when stock was added), fallback to date
+      let stockDate = s.addedDate || s.date || '';
+      // Normalize date format (remove time if present)
+      if (stockDate && stockDate.includes('T')) {
+        stockDate = stockDate.split('T')[0];
+      }
+      // If date is still missing, use createdAt or current date
+      if (!stockDate) {
+        if (s.createdAt) {
+          const createdDate = new Date(s.createdAt);
+          stockDate = createdDate.toISOString().split('T')[0];
+        } else {
+          stockDate = new Date().toISOString().split('T')[0];
+        }
+      }
+      
+      // Filter by date range - check both date and addedDate
+      const dateMatches = (!dateFrom || stockDate >= dateFrom) && (!dateTo || stockDate <= dateTo);
+      const branchMatches = (branch === 'All Branches' || s.branch === branch);
+      
+      if (dateMatches && branchMatches) {
+        const keyAgg = `${stockDate}|${s.branch}|${s.itemCode}`;
+        if (!groceryAgg[keyAgg]) {
+          groceryAgg[keyAgg] = { 
+            date: stockDate, 
+            branch: s.branch, 
+            itemCode: s.itemCode, 
+            added: 0, 
+            returned: 0, 
+            transferred: 0 
+          };
+        }
+        // Add the quantity (original added quantity) to the aggregation
         groceryAgg[keyAgg].added += Number(s.quantity || 0);
       }
     });
@@ -373,23 +398,41 @@ function generateReport() {
       }
     });
 
+    // Process grocery aggregated data - show ALL rows where added > 0 (even if no returns/transfers)
     Object.values(groceryAgg).forEach(row => {
       const item = items.find(i => i.code === row.itemCode && i.itemType === 'Grocery Item');
       if (!item) return;
       if (itemFilter && item.name !== itemFilter) return;
       if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) return;
+      
+      // Show if any activity (added, returned, transferred, or calculated available)
+      // IMPORTANT: Include all rows where added > 0, even if no returns or transfers
+      const hasActivity = (row.added || 0) > 0 || (row.returned || 0) > 0 || (row.transferred || 0) > 0;
+      if (!hasActivity) return;
+      
+      // Calculate available quantity from current grocery stocks
       const availableBatches = (groceryStocks || []).filter(s => s.itemCode === row.itemCode && s.branch === row.branch);
-      const availableQty = availableBatches.reduce((sum, s) => sum + (s.remaining ?? s.quantity), 0);
+      const availableQty = availableBatches.reduce((sum, s) => sum + parseFloat(s.remaining || s.quantity || 0), 0);
+      const calculatedAvailable = Math.max(0, (row.added || 0) - (row.returned || 0) - (row.transferred || 0));
+      
+      // Use actual available quantity if available, otherwise use calculated
+      const available = availableQty > 0 ? availableQty : calculatedAvailable;
+      
+      const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
+      const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
+      const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
+      const availableDisplay = item.soldByWeight ? Number(available).toFixed(3) : Math.round(available);
+      
       tableBody += `
         <tr class="table-success">
           <td>${row.date}</td>
           <td>${row.branch}</td>
           <td>${item.name} (Grocery)</td>
           <td>Grocery Item</td>
-          <td>${item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.trunc(row.added || 0)}</td>
-          <td>${item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.trunc(row.returned || 0)}</td>
-          <td>${item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.trunc(row.transferred || 0)}</td>
-          <td>${item.soldByWeight ? Number(availableQty).toFixed(3) : Math.trunc(availableQty)}</td>
+          <td>${addedDisplay}</td>
+          <td>${returnedDisplay}</td>
+          <td>${transferredDisplay}</td>
+          <td>${availableDisplay}</td>
         </tr>
       `;
     });
@@ -428,21 +471,37 @@ function generateReport() {
       for (const d of dateRange(dateFrom || '1970-01-01', dateTo || new Date().toISOString().split('T')[0])) {
         const key = `${d}_${b}`;
         const stockForDay = stocks[key] || {};
+        const groceryStocks = JSON.parse(localStorage.getItem('groceryStocks')) || [];
+        
         itemsAll.forEach(it => {
           if (itemFilter && it.name !== itemFilter) return;
           if (itemTypeFilter && it.itemType !== itemTypeFilter) return;
 
           let addedQty = 0;
+          
           if (it.itemType === 'Normal Item') {
+            // Check Stocks for this date/branch/itemCode
             const entry = stockForDay[it.code];
             addedQty = Number(entry?.added || 0);
           } else if (it.itemType === 'Grocery Item') {
-            const groceryStocks = JSON.parse(localStorage.getItem('groceryStocks')) || [];
-            addedQty = groceryStocks
-              .filter(s => s.itemCode === it.code && s.branch === b && s.date === d)
-              .reduce((sum, s) => sum + Number(s.quantity || 0), 0);
+            // Check GroceryStocks - sum all quantities for this date/branch/itemCode
+            // Use addedDate first, then date field
+            const stocksForDate = groceryStocks.filter(s => {
+              if (s.itemCode !== it.code || s.branch !== b) return false;
+              
+              // Normalize date comparison
+              let stockDate = s.addedDate || s.date || '';
+              if (stockDate && stockDate.includes('T')) {
+                stockDate = stockDate.split('T')[0];
+              }
+              
+              return stockDate === d;
+            });
+            
+            addedQty = stocksForDate.reduce((sum, s) => sum + parseFloat(s.quantity || 0), 0);
           }
 
+          // If added quantity is 0, include in report
           if (addedQty === 0) {
             tableBody += `
               <tr>
@@ -456,6 +515,10 @@ function generateReport() {
           }
         });
       }
+    }
+    
+    if (!tableBody) {
+      tableBody = '<tr><td colspan="5" class="text-center">No zero added items found for the selected criteria.</td></tr>';
     }
   }
   else if (type === 'transfer') {
