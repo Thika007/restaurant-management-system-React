@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { branchesAPI, stocksAPI, cashAPI, groceryAPI, machinesAPI, itemsAPI, transfersAPI, usersAPI } from '../services/api';
+import { branchesAPI, stocksAPI, cashAPI, groceryAPI, machinesAPI, itemsAPI, transfersAPI, usersAPI, activitiesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { getCurrentDate, formatCurrency, getDateRange } from '../utils/helpers';
 import { Chart, registerables } from 'chart.js';
@@ -30,6 +30,8 @@ const Dashboard = () => {
   const [topSellingItems, setTopSellingItems] = useState([]);
   const [recentActivities, setRecentActivities] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
   const salesChartRef = useRef(null);
   const chartInstanceRef = useRef(null);
 
@@ -51,6 +53,17 @@ const Dashboard = () => {
       loadDashboard();
     }
   }, [branch, dateFrom, dateTo, branches, items]);
+
+  // Auto-refresh recent activities every 30 seconds for real-time updates
+  useEffect(() => {
+    if (branches.length > 0 && items.length > 0) {
+      const interval = setInterval(() => {
+        loadRecentActivities();
+      }, 30000); // Refresh every 30 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [branch, branches, items]);
 
   const loadInitialData = async () => {
     try {
@@ -102,6 +115,7 @@ const Dashboard = () => {
       let stockValueNormal = 0;
       let stockValueGrocery = 0;
       let machineSalesCash = 0;
+      let normalItemSales = 0; // Track sales from finished normal item batches
       let totalActualCash = 0;
       let totalExpectedCashForAccuracy = 0;
       let entryCount = 0;
@@ -127,16 +141,18 @@ const Dashboard = () => {
                 const soldQty = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
                 const available = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
                 
-                // Stock value (all batches)
-                stockValueNormal += available * (item.price || 0);
+                // Stock value (only unfinished batches - finished batches have 0 available stock)
+                if (!stockRes.data.isFinished) {
+                  stockValueNormal += available * (item.price || 0);
+                }
 
-                // Sales and expected cash (finished batches only)
+                // Sales from finished batches (track separately for Expected Cash calculation)
                 if (stockRes.data.isFinished) {
                   const revenue = soldQty * (item.price || 0);
                   totalSales += revenue;
+                  normalItemSales += revenue; // Track normal item sales separately
                   totalItemsSold += soldQty;
                   totalReturnItems += stock.returned || 0;
-                  totalExpectedCash += revenue;
 
                   // Sales chart data
                   if (!salesData[date]) salesData[date] = 0;
@@ -289,13 +305,20 @@ const Dashboard = () => {
         cashAccuracy = `${Math.max(0, Math.min(100, accuracy))}%`;
       }
 
+      // Calculate Expected Cash:
+      // - Normal items: finished batches contribute sales (normalItemSales); unfinished contribute stock value (stockValueNormal)
+      // - Grocery: expected cash is based on sales only (not remaining stock value)
+      // - Machine: sales contribute to expected cash
+      // Expected Cash = Normal Item Sales (finished) + Normal Stock Value (unfinished) + Grocery Sales + Machine Sales + Available Stock Value (Grocery)
+      const calculatedExpectedCash = normalItemSales + stockValueNormal + stockValueGrocery + totalExpectedCash;
+
       // Update stats
       setStats({
         totalSales,
         itemsSold: totalItemsSold,
         cashAccuracy,
         returnItems: totalReturnItems,
-        expectedCash: totalExpectedCash,
+        expectedCash: calculatedExpectedCash,
         stockValueNormal,
         stockValueGrocery,
         machineSalesCash
@@ -375,239 +398,41 @@ const Dashboard = () => {
 
   const loadRecentActivities = async () => {
     try {
-      const activities = [];
-      const availableBranches = getAvailableBranches();
-      const branchesToFetch = branch && branch !== 'All Branches' 
-        ? [branch]
-        : availableBranches.map(b => b.name);
-
-      // Get users for operator name resolution
-      let users = [];
-      try {
-        const usersRes = await usersAPI.getAll();
-        if (usersRes.data.success) {
-          users = usersRes.data.users || [];
-        }
-      } catch (error) {
-        console.error('Error fetching users for activities:', error);
-      }
-
-      // Get grocery stocks (additions) - limit to recent
-      try {
-        for (const branchName of branchesToFetch) {
-          const groceryStocksRes = await groceryAPI.getStocks({ branch: branchName });
-          if (groceryStocksRes.data.success) {
-            const stocks = groceryStocksRes.data.stocks || [];
-            // Filter to recent stocks (last 7 days)
-            const recentDate = new Date();
-            recentDate.setDate(recentDate.getDate() - 7);
-            
-            for (const stock of stocks) {
-              const stockDate = stock.addedDate ? new Date(stock.addedDate) : (stock.date ? new Date(stock.date) : new Date());
-              if (stockDate >= recentDate) {
-                const item = items.find(i => i.code === stock.itemCode);
-                if (item) {
-                  activities.push({
-                    type: 'grocery_stock_added',
-                    date: stockDate,
-                    branch: stock.branch,
-                    message: `${stock.quantity} ${item.name} added to ${stock.branch}`,
-                    timestamp: stockDate.getTime()
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching grocery stocks for activities:', error);
-      }
-
-      // Get normal item stocks (additions and returns) - fetch for recent dates only
+      // Calculate date range for recent activities (last 7 days by default)
       const recentDate = new Date();
-      recentDate.setDate(recentDate.getDate() - 7); // Last 7 days
+      recentDate.setDate(recentDate.getDate() - 7);
       const recentDateStr = recentDate.toISOString().split('T')[0];
       const todayStr = new Date().toISOString().split('T')[0];
+
+      // Build query parameters
+      const params = {
+        dateFrom: recentDateStr,
+        dateTo: todayStr,
+        limit: 100
+      };
+
+      // Filter by branch if selected
+        if (branch && branch !== 'All Branches') {
+          params.branch = branch;
+      }
+
+      // Fetch activities from the new API
+      const activitiesRes = await activitiesAPI.getRecentActivities(params);
       
-      // Limit to last 7 days to avoid too many API calls
-      for (const branchName of branchesToFetch) {
-        const dates = getDateRange(recentDateStr, todayStr);
-        // Only check last 7 days, limit to avoid performance issues
-        const limitedDates = dates.slice(-7);
-        for (const date of limitedDates) {
-          try {
-            const stockRes = await stocksAPI.get({ date, branch: branchName });
-            if (stockRes.data.success) {
-              for (const stock of stockRes.data.stocks || []) {
-                const item = items.find(i => i.code === stock.itemCode && i.itemType === 'Normal Item');
-                if (!item) continue;
-
-                if (stock.added > 0) {
-                  const activityDate = new Date(date + 'T12:00:00');
-                  activities.push({
-                    type: 'stock_added',
-                    date: activityDate,
-                    branch: branchName,
-                    message: `${stock.added} ${item.name} added to ${branchName}`,
-                    timestamp: activityDate.getTime()
-                  });
-                }
-
-                if (stock.returned > 0) {
-                  const activityDate = new Date(date + 'T12:00:00');
-                  activities.push({
-                    type: 'return',
-                    date: activityDate,
-                    branch: branchName,
-                    message: `${stock.returned} ${item.name} returned at ${branchName}`,
-                    timestamp: activityDate.getTime()
-                  });
-                }
-              }
-            }
-          } catch (err) {
-            // Skip if no data
-          }
-        }
-      }
-
-      // Get cash entries
-      try {
-        const params = { dateFrom: recentDateStr, dateTo: todayStr };
-        if (branch && branch !== 'All Branches') {
-          params.branch = branch;
-        }
-        const cashRes = await cashAPI.getEntries(params);
+      if (activitiesRes.data.success) {
+        const activities = activitiesRes.data.activities.map(activity => ({
+          type: activity.type,
+          message: activity.message,
+          branch: activity.branch,
+          date: new Date(activity.timestamp),
+          timestamp: new Date(activity.timestamp).getTime()
+        }));
         
-        if (cashRes.data.success) {
-          for (const entry of cashRes.data.entries || []) {
-            const entryDate = entry.timestamp ? new Date(entry.timestamp) : (entry.date ? new Date(entry.date + 'T12:00:00') : new Date());
-            const isDiscrepancy = Math.abs(entry.difference || 0) > 0;
-            
-            // Resolve operator name from users list
-            let operatorName = entry.operatorName || entry.operatorId || 'Unknown';
-            if (entry.operatorId && !entry.operatorName) {
-              const user = users.find(u => u.id === entry.operatorId || u.username === entry.operatorId);
-              if (user && user.fullName) operatorName = user.fullName;
-              else if (entry.operatorId === 'admin') operatorName = 'Administrator';
-            }
-            
-            activities.push({
-              type: isDiscrepancy ? 'cash_discrepancy' : 'cash_entry',
-              date: entryDate,
-              branch: entry.branch,
-              message: `${operatorName} recorded cash for ${entry.branch}: Actual Rs ${parseFloat(entry.actual || 0).toFixed(2)} vs Expected Rs ${parseFloat(entry.expected || 0).toFixed(2)} (Diff Rs ${parseFloat(entry.difference || 0).toFixed(2)})`,
-              timestamp: entryDate.getTime()
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching cash entries for activities:', error);
+        setRecentActivities(activities);
+        setCurrentPage(1); // Reset to first page when activities reload
+                    } else {
+        setRecentActivities([]);
       }
-
-      // Get machine batches (completed)
-      try {
-        for (const branchName of branchesToFetch) {
-          const machinesRes = await machinesAPI.getBatches({ branch: branchName, status: 'completed' });
-          if (machinesRes.data.success) {
-            for (const batch of machinesRes.data.batches || []) {
-              const machine = items.find(i => i.code === batch.machineCode && i.itemType === 'Machine');
-              if (machine && batch.status === 'completed') {
-                const soldQty = (batch.endValue || 0) - (batch.startValue || 0);
-                const activityDate = batch.endTime ? new Date(batch.endTime) : (batch.date ? new Date(batch.date + 'T12:00:00') : new Date());
-                activities.push({
-                  type: 'machine_sale',
-                  date: activityDate,
-                  branch: batch.branch,
-                  message: `${soldQty} ${machine.name} sales at ${batch.branch}`,
-                  timestamp: activityDate.getTime()
-                });
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching machine batches for activities:', error);
-      }
-
-      // Get grocery sales
-      try {
-        const params = { dateFrom: recentDateStr, dateTo: todayStr };
-        if (branch && branch !== 'All Branches') {
-          params.branch = branch;
-        }
-        const grocerySalesRes = await groceryAPI.getSales(params);
-        
-        if (grocerySalesRes.data.success) {
-          for (const sale of grocerySalesRes.data.sales || []) {
-            const saleDate = sale.timestamp ? new Date(sale.timestamp) : (sale.date ? new Date(sale.date + 'T12:00:00') : new Date());
-            activities.push({
-              type: 'grocery_sale',
-              date: saleDate,
-              branch: sale.branch,
-              message: `${sale.soldQty} ${sale.itemName} sold at ${sale.branch}`,
-              timestamp: saleDate.getTime()
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching grocery sales for activities:', error);
-      }
-
-      // Get grocery returns
-      try {
-        const params = { dateFrom: recentDateStr, dateTo: todayStr };
-        if (branch && branch !== 'All Branches') {
-          params.branch = branch;
-        }
-        const groceryReturnsRes = await groceryAPI.getReturns(params);
-        
-        if (groceryReturnsRes.data.success) {
-          for (const ret of groceryReturnsRes.data.returns || []) {
-            const retDate = ret.timestamp ? new Date(ret.timestamp) : (ret.date ? new Date(ret.date + 'T12:00:00') : new Date());
-            activities.push({
-              type: 'grocery_return',
-              date: retDate,
-              branch: ret.branch,
-              message: `${ret.returnedQty} ${ret.itemName} returned (waste) at ${ret.branch}`,
-              timestamp: retDate.getTime()
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching grocery returns for activities:', error);
-      }
-
-      // Get transfer history
-      try {
-        const params = { dateFrom: recentDateStr, dateTo: todayStr };
-        if (branch && branch !== 'All Branches') {
-          params.branch = branch;
-        }
-        const transfersRes = await transfersAPI.get(params);
-        
-        if (transfersRes.data.success) {
-          for (const transfer of transfersRes.data.transfers || []) {
-            const transferDate = transfer.processedAt ? new Date(transfer.processedAt) : (transfer.date ? new Date(transfer.date + 'T12:00:00') : new Date());
-            const itemNames = transfer.items.map(item => item.itemName).join(', ');
-            activities.push({
-              type: 'transfer',
-              date: transferDate,
-              branch: transfer.senderBranch,
-              message: `Internal transfer: ${transfer.items.length} ${transfer.itemType.toLowerCase()} items (${itemNames}) from ${transfer.senderBranch} to ${transfer.receiverBranch}`,
-              timestamp: transferDate.getTime()
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching transfers for activities:', error);
-      }
-
-      // Sort activities by timestamp (newest first) and get top 5
-      activities.sort((a, b) => b.timestamp - a.timestamp);
-      const recent = activities.slice(0, 5);
-      
-      setRecentActivities(recent);
     } catch (error) {
       console.error('Error loading recent activities:', error);
       setRecentActivities([]);
@@ -616,14 +441,43 @@ const Dashboard = () => {
 
   const availableBranches = getAvailableBranches();
 
+  const formatActivityType = (type) => {
+    return type
+      .split('_')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  };
+
+  // Pagination calculations
+  const totalPages = Math.ceil(recentActivities.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedActivities = recentActivities.slice(startIndex, endIndex);
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxPagesToShow = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2));
+    let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
+    
+    if (endPage - startPage < maxPagesToShow - 1) {
+      startPage = Math.max(1, endPage - maxPagesToShow + 1);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+    return pages;
+  };
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 className="h2">Dashboard</h1>
         <div className="btn-toolbar mb-2 mb-md-0">
-          <div className="btn-group me-2">
+          <div className="d-flex flex-wrap gap-2 align-items-center">
             <select 
-              className="form-select me-2" 
+              className="form-select" 
+              style={{ width: 'auto' }}
               value={branch}
               onChange={(e) => setBranch(e.target.value)}
             >
@@ -632,18 +486,39 @@ const Dashboard = () => {
                 <option key={b.name} value={b.name}>{b.name}</option>
               ))}
             </select>
-            <input 
-              type="date" 
-              className="form-control me-2" 
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
-            <input 
-              type="date" 
-              className="form-control" 
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
+            <div className="d-flex align-items-center gap-2">
+              <label className="mb-0 fw-semibold">From:</label>
+              <input 
+                type="date" 
+                className="form-control" 
+                style={{ width: 'auto' }}
+                value={dateFrom}
+                max={dateTo}
+                onChange={(e) => {
+                  const newDateFrom = e.target.value;
+                  if (newDateFrom <= dateTo) {
+                    setDateFrom(newDateFrom);
+                  }
+                }}
+              />
+            </div>
+            <div className="d-flex align-items-center gap-2">
+              <label className="mb-0 fw-semibold">To:</label>
+              <input 
+                type="date" 
+                className="form-control" 
+                style={{ width: 'auto' }}
+                value={dateTo}
+                min={dateFrom}
+                max={getCurrentDate()}
+                onChange={(e) => {
+                  const newDateTo = e.target.value;
+                  if (newDateTo >= dateFrom) {
+                    setDateTo(newDateTo);
+                  }
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -788,15 +663,15 @@ const Dashboard = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {recentActivities.length === 0 ? (
+                    {paginatedActivities.length === 0 ? (
                       <tr>
                         <td colSpan="4" className="text-center text-muted">No recent activity</td>
                       </tr>
                     ) : (
-                      recentActivities.map((activity, index) => (
-                        <tr key={index}>
+                      paginatedActivities.map((activity, index) => (
+                        <tr key={`${activity.timestamp}-${index}`}>
                           <td>{new Date(activity.date).toLocaleString()}</td>
-                          <td>{activity.type.replace('_', ' ')}</td>
+                          <td>{formatActivityType(activity.type)}</td>
                           <td>{activity.message}</td>
                           <td>{activity.branch || '-'}</td>
                         </tr>
@@ -805,6 +680,51 @@ const Dashboard = () => {
                   </tbody>
                 </table>
               </div>
+              
+              {/* Pagination Controls */}
+              {recentActivities.length > 0 && (
+                <div className="card-footer">
+                  <div className="d-flex justify-content-between align-items-center flex-wrap">
+                    <div className="mb-2 mb-md-0">
+                      <span className="text-muted">
+                        Showing {startIndex + 1} to {Math.min(endIndex, recentActivities.length)} of {recentActivities.length} activities
+                      </span>
+                    </div>
+                    <nav>
+                      <ul className="pagination mb-0">
+                        <li className={`page-item ${currentPage === 1 ? 'disabled' : ''}`}>
+                          <button
+                            className="page-link"
+                            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                            disabled={currentPage === 1}
+                          >
+                            Previous
+                          </button>
+                        </li>
+                        {getPageNumbers().map(pageNum => (
+                          <li key={pageNum} className={`page-item ${currentPage === pageNum ? 'active' : ''}`}>
+                            <button
+                              className="page-link"
+                              onClick={() => setCurrentPage(pageNum)}
+                            >
+                              {pageNum}
+                            </button>
+                          </li>
+                        ))}
+                        <li className={`page-item ${currentPage === totalPages ? 'disabled' : ''}`}>
+                          <button
+                            className="page-link"
+                            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                            disabled={currentPage === totalPages}
+                          >
+                            Next
+                          </button>
+                        </li>
+                      </ul>
+                    </nav>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

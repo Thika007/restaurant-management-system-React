@@ -4,7 +4,7 @@ const { getConnection } = require('../config/db');
  * Clear all transaction data (sales, transfers, returns, added details)
  * 
  * This function clears ALL data that appears on:
- * - Dashboard (sales, stock values, cash entries, returns, transfers, activities)
+ * - Dashboard (sales, stock values, cash entries, returns, transfers, activities, recent activities)
  * - Reports (all transaction data)
  * - Expire Tracking (grocery stock with expiry dates)
  * 
@@ -51,6 +51,9 @@ const clearTransactionData = async (req, res) => {
     
     // 10. Notifications - System notifications (Dashboard)
     await pool.request().query('DELETE FROM Notifications');
+    
+    // 11. RecentActivities - Recent activity logs (Dashboard Recent Activity table)
+    await pool.request().query('DELETE FROM RecentActivities');
 
     res.json({ 
       success: true, 

@@ -132,3 +132,8 @@ export const systemAPI = {
   clearTransactionData: () => api.delete('/system/clear-data')
 };
 
+// Activities API
+export const activitiesAPI = {
+  getRecentActivities: (params) => api.get('/activities', { params })
+};
+

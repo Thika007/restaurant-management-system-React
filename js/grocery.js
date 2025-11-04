@@ -127,7 +127,22 @@ function loadGroceryReturnItems(branch) {
   const groceryStocks = JSON.parse(localStorage.getItem('groceryStocks')) || [];
   const tableBody = document.getElementById('groceryReturnTableBody');
 
-  let html = items.filter(i => i.itemType === 'Grocery Item').map(item => {
+  // Filter to only show grocery items with stock > 0
+  const groceryItems = items.filter(i => i.itemType === 'Grocery Item');
+  const itemsWithStock = groceryItems.filter(item => {
+    const stockData = groceryStocks.filter(s => s.itemCode === item.code && s.branch === branch);
+    const totalStock = stockData.reduce((sum, s) => sum + (s.remaining ?? s.quantity), 0);
+    return totalStock > 0;
+  });
+
+  if (itemsWithStock.length === 0) {
+    tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-warning">No grocery items with available stock. Please add stocks first before adding returns.</td></tr>';
+    const controls = document.getElementById('groceryReturnControls');
+    if (controls) controls.style.display = 'none';
+    return;
+  }
+
+  let html = itemsWithStock.map(item => {
     const stockData = groceryStocks.filter(s => s.itemCode === item.code && s.branch === branch);
     const totalStock = stockData.reduce((sum, s) => sum + (s.remaining ?? s.quantity), 0);
 
@@ -142,7 +157,7 @@ function loadGroceryReturnItems(branch) {
     `;
   }).join('');
 
-  tableBody.innerHTML = html || '<tr><td colspan="5" class="text-center">No grocery items available.</td></tr>';
+  tableBody.innerHTML = html;
   
   // Show controls for grocery section
   const controls = document.getElementById('groceryReturnControls');

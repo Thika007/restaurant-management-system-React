@@ -234,7 +234,8 @@ const AddStock = () => {
         setShowGroceryModal(false);
         setSelectedGroceryItem(null);
         setGroceryFormData({ quantity: '', expiryDate: '' });
-        loadGroceryStocks();
+        // Reload stocks to refresh Total Stock display
+        await loadGroceryStocks();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to add grocery stock';
@@ -350,10 +351,12 @@ const AddStock = () => {
     }
   };
 
-  // Get available stock for grocery item
+  // Get available stock for grocery item - Total Stock = sum of remaining from all batches
   const getGroceryAvailableStock = (itemCode) => {
+    if (!selectedBranch) return 0;
     const itemStocks = groceryStocks.filter(s => s.itemCode === itemCode && s.branch === selectedBranch);
-    const total = itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || s.quantity || 0), 0);
+    // Total Stock = sum of remaining from all batches (current available stock)
+    const total = itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
     return total;
   };
 

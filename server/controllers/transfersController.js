@@ -1,4 +1,5 @@
 const { getConnection, sql } = require('../config/db');
+const { createActivity } = require('./activitiesController');
 
 const getTransfers = async (req, res) => {
   try {
@@ -170,6 +171,70 @@ const createTransfer = async (req, res) => {
         INSERT INTO TransferHistory (id, date, senderBranch, receiverBranch, itemType, items, processedBy)
         VALUES (@id, @date, @senderBranch, @receiverBranch, @itemType, @items, @processedBy)
       `);
+
+    // Log activities for transfers
+    const activityTimestamp = new Date();
+    
+    // Get item names for better activity messages
+    const itemCodes = items.map(i => i.itemCode);
+    const itemsMap = {};
+    
+    // Fetch item names - use individual queries for each item code (safe and simple)
+    if (itemCodes.length > 0) {
+      for (const code of itemCodes) {
+        if (!itemsMap[code]) {
+          const itemResult = await pool.request()
+            .input('code', sql.NVarChar, code)
+            .query('SELECT code, name FROM Items WHERE code = @code');
+          
+          if (itemResult.recordset.length > 0) {
+            itemsMap[code] = itemResult.recordset[0].name;
+          }
+        }
+      }
+    }
+
+    // Log activity for each item transferred
+    for (const item of items) {
+      const itemName = itemsMap[item.itemCode] || item.itemCode;
+      const quantity = item.quantity;
+      
+      // Log activity on sender branch (items sent out)
+      await createActivity(
+        'transfer',
+        `${quantity} ${itemName} transferred from ${senderBranch} to ${receiverBranch}`,
+        senderBranch,
+        activityTimestamp,
+        { 
+          itemCode: item.itemCode, 
+          itemName, 
+          quantity, 
+          senderBranch, 
+          receiverBranch, 
+          itemType, 
+          date,
+          direction: 'sent'
+        }
+      );
+
+      // Log activity on receiver branch (items received)
+      await createActivity(
+        'transfer',
+        `${quantity} ${itemName} received from ${senderBranch} to ${receiverBranch}`,
+        receiverBranch,
+        activityTimestamp,
+        { 
+          itemCode: item.itemCode, 
+          itemName, 
+          quantity, 
+          senderBranch, 
+          receiverBranch, 
+          itemType, 
+          date,
+          direction: 'received'
+        }
+      );
+    }
 
     res.json({ success: true, message: 'Transfer completed successfully' });
   } catch (error) {

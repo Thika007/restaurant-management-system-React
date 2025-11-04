@@ -1,5 +1,6 @@
 const { getConnection, sql } = require('../config/db');
 const { checkExpiringItems } = require('./notificationsController');
+const { createActivity } = require('./activitiesController');
 
 const generateBatchId = () => 'B' + Date.now() + Math.random().toString(36).substr(2, 9);
 const generateId = () => 'GROCERY_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -64,6 +65,30 @@ const addGroceryStock = async (req, res) => {
         INSERT INTO GroceryStocks (id, batchId, itemCode, branch, quantity, remaining, expiryDate, date, addedDate)
         VALUES (@id, @batchId, @itemCode, @branch, @quantity, @remaining, @expiryDate, @date, @addedDate)
       `);
+
+    // Get item name for activity logging
+    let itemName = itemCode;
+    try {
+      const itemResult = await pool.request()
+        .input('itemCode', sql.NVarChar, itemCode)
+        .query('SELECT name FROM Items WHERE code = @itemCode');
+      
+      if (itemResult.recordset.length > 0) {
+        itemName = itemResult.recordset[0].name;
+      }
+    } catch (error) {
+      console.error('Error fetching item name for activity:', error);
+    }
+
+    // Log activity for grocery stock addition
+    const activityTimestamp = new Date();
+    await createActivity(
+      'grocery_stock_added',
+      `${quantity} ${itemName} added to ${branch}`,
+      branch,
+      activityTimestamp,
+      { itemCode, quantity, expiryDate, date: stockDate }
+    );
 
     // Check for expiring items and create notifications
     try {
@@ -139,6 +164,16 @@ const recordGrocerySale = async (req, res) => {
         VALUES (@itemCode, @itemName, @branch, @date, @soldQty, @totalCash)
       `);
 
+    // Log activity for grocery sale
+    const activityTimestamp = new Date();
+    await createActivity(
+      'grocery_sale',
+      `${soldQty} ${itemName} sold at ${branch}`,
+      branch,
+      activityTimestamp,
+      { itemCode, itemName, soldQty, totalCash, date }
+    );
+
     res.json({ success: true, message: 'Grocery sale recorded successfully' });
   } catch (error) {
     console.error('Record grocery sale error:', error);
@@ -192,28 +227,44 @@ const recordGroceryReturn = async (req, res) => {
     const pool = await getConnection();
 
     // Reduce remaining stock (FIFO)
+    // Get all stocks including those with remaining = 0 (to handle edge cases)
     const stocks = await pool.request()
       .input('itemCode', sql.NVarChar, itemCode)
       .input('branch', sql.NVarChar, branch)
       .query(`
         SELECT id, remaining 
         FROM GroceryStocks 
-        WHERE itemCode = @itemCode AND branch = @branch AND remaining > 0
+        WHERE itemCode = @itemCode AND branch = @branch
         ORDER BY expiryDate ASC, addedDate ASC
       `);
 
     let remainingToReturn = parseFloat(returnedQty);
     
-    for (const stock of stocks.recordset) {
+    // Only process stocks with remaining > 0
+    const stocksWithRemaining = stocks.recordset.filter(s => parseFloat(s.remaining || 0) > 0);
+    
+    for (const stock of stocksWithRemaining) {
       if (remainingToReturn <= 0) break;
-      const deduct = Math.min(parseFloat(stock.remaining), remainingToReturn);
+      const currentRemaining = parseFloat(stock.remaining || 0);
+      const deduct = Math.min(currentRemaining, remainingToReturn);
+      
+      // Update remaining (can become 0)
+      const newRemaining = Math.max(0, currentRemaining - deduct);
       
       await pool.request()
         .input('id', sql.NVarChar, stock.id)
-        .input('deduct', sql.Decimal(18, 3), deduct)
-        .query('UPDATE GroceryStocks SET remaining = remaining - @deduct WHERE id = @id');
+        .input('remaining', sql.Decimal(18, 3), newRemaining)
+        .query('UPDATE GroceryStocks SET remaining = @remaining WHERE id = @id');
       
       remainingToReturn -= deduct;
+    }
+    
+    // Validate that we had enough stock to return
+    if (remainingToReturn > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot return ${returnedQty}. Only ${parseFloat(returnedQty) - remainingToReturn} available stock.` 
+      });
     }
 
     // Record return
@@ -228,6 +279,17 @@ const recordGroceryReturn = async (req, res) => {
         INSERT INTO GroceryReturns (itemCode, itemName, branch, date, returnedQty, reason)
         VALUES (@itemCode, @itemName, @branch, @date, @returnedQty, @reason)
       `);
+
+    // Log activity for grocery return
+    const activityTimestamp = new Date();
+    const reasonText = reason && reason !== 'waste' ? ` (${reason})` : ' (waste)';
+    await createActivity(
+      'grocery_return',
+      `${returnedQty} ${itemName} returned${reasonText} at ${branch}`,
+      branch,
+      activityTimestamp,
+      { itemCode, itemName, returnedQty, reason: reason || 'waste', date }
+    );
 
     res.json({ success: true, message: 'Grocery return recorded successfully' });
   } catch (error) {
@@ -269,20 +331,76 @@ const updateGroceryRemaining = async (req, res) => {
         });
       }
 
-      // Update stocks to match new remaining (distribute proportionally or FIFO)
-      let remainingToUpdate = newRemaining;
-      for (const stock of stocks.recordset) {
-        const currentRemaining = parseFloat(stock.remaining || stock.quantity);
-        const proportion = currentRemaining / totalRemaining;
-        const newStockRemaining = Math.max(0, Math.min(currentRemaining, remainingToUpdate * proportion));
-        
+      // Determine if item is sold by weight to choose rounding strategy
+      const itemInfo = await pool.request()
+        .input('itemCode', sql.NVarChar, update.itemCode)
+        .query('SELECT soldByWeight FROM Items WHERE code = @itemCode');
+      const soldByWeight = itemInfo.recordset[0]?.soldByWeight === true || itemInfo.recordset[0]?.soldByWeight === 1;
+
+      // Proportional allocation across batches
+      const allocations = stocks.recordset.map(s => {
+        const current = parseFloat(s.remaining || s.quantity || 0);
+        const proportion = totalRemaining > 0 ? (current / totalRemaining) : 0;
+        const alloc = Math.max(0, Math.min(current, newRemaining * proportion));
+        return { id: s.id, current, alloc };
+      });
+
+      if (soldByWeight) {
+        // Round to 3 decimals to avoid 3.999 -> 3 truncation on UI
+        let sum = 0;
+        for (const a of allocations) {
+          a.alloc = Math.min(a.current, Math.max(0, Math.round(a.alloc * 1000) / 1000));
+          sum += a.alloc;
+        }
+        // Adjust small floating diff to exactly match newRemaining within 0.001
+        const diff = Math.round((newRemaining - sum) * 1000) / 1000;
+        if (Math.abs(diff) >= 0.001) {
+          // Distribute difference to batches with available headroom
+          for (const a of allocations) {
+            if (diff > 0 && a.alloc + 0.001 <= a.current) { a.alloc = Math.round((a.alloc + 0.001) * 1000) / 1000; break; }
+            if (diff < 0 && a.alloc - 0.001 >= 0) { a.alloc = Math.round((a.alloc - 0.001) * 1000) / 1000; break; }
+          }
+        }
+      } else {
+        // Integer-safe allocation for non-weight items
+        const prelim = allocations.map(a => ({
+          id: a.id,
+          current: a.current,
+          base: Math.min(a.current, Math.max(0, Math.floor(a.alloc)))
+        }));
+        let sumInt = prelim.reduce((s, a) => s + a.base, 0);
+        let target = Math.round(newRemaining);
+        let remainingUnits = Math.max(0, target - sumInt);
+
+        // Sort by largest fractional part to add leftover units
+        const withFrac = allocations.map(a => ({
+          id: a.id,
+          current: a.current,
+          frac: a.alloc - Math.floor(a.alloc)
+        })).sort((x, y) => y.frac - x.frac);
+
+        const intMap = new Map(prelim.map(a => [a.id, a.base]));
+        for (const a of withFrac) {
+          if (remainingUnits <= 0) break;
+          const curVal = intMap.get(a.id) || 0;
+          if (curVal < a.current) { // don't exceed available in that batch
+            intMap.set(a.id, curVal + 1);
+            remainingUnits -= 1;
+          }
+        }
+
+        // Apply back to allocations as integers
+        allocations.forEach(a => {
+          a.alloc = Math.min(a.current, intMap.get(a.id) || 0);
+        });
+      }
+
+      // Persist updated remaining values
+      for (const a of allocations) {
         await pool.request()
-          .input('id', sql.NVarChar, stock.id)
-          .input('remaining', sql.Decimal(18, 3), newStockRemaining)
+          .input('id', sql.NVarChar, a.id)
+          .input('remaining', sql.Decimal(18, 3), a.alloc)
           .query('UPDATE GroceryStocks SET remaining = @remaining WHERE id = @id');
-        
-        remainingToUpdate -= newStockRemaining;
-        if (remainingToUpdate <= 0) break;
       }
 
       // Record sale if soldQty > 0
@@ -294,6 +412,7 @@ const updateGroceryRemaining = async (req, res) => {
         if (itemResult.recordset.length > 0) {
           const item = itemResult.recordset[0];
           const today = new Date().toISOString().split('T')[0];
+          const totalCash = soldQty * parseFloat(item.price);
           
           await pool.request()
             .input('itemCode', sql.NVarChar, update.itemCode)
@@ -301,11 +420,21 @@ const updateGroceryRemaining = async (req, res) => {
             .input('branch', sql.NVarChar, branch)
             .input('date', sql.Date, today)
             .input('soldQty', sql.Decimal(18, 3), soldQty)
-            .input('totalCash', sql.Decimal(18, 2), soldQty * parseFloat(item.price))
+            .input('totalCash', sql.Decimal(18, 2), totalCash)
             .query(`
               INSERT INTO GrocerySales (itemCode, itemName, branch, date, soldQty, totalCash)
               VALUES (@itemCode, @itemName, @branch, @date, @soldQty, @totalCash)
             `);
+
+          // Log activity for grocery sale (when remaining is updated)
+          const activityTimestamp = new Date();
+          await createActivity(
+            'grocery_sale',
+            `${soldQty} ${item.name} sold at ${branch}`,
+            branch,
+            activityTimestamp,
+            { itemCode: update.itemCode, itemName: item.name, soldQty, totalCash, date: today }
+          );
         }
       }
     }

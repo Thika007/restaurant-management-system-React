@@ -77,6 +77,7 @@ const ExpireTracking = () => {
     const userExpireTrackingBranches = user?.expireTrackingBranches || [];
     
     // Filter and process grocery stocks
+    // Include ALL stocks with expiry dates, even if remaining = 0
     let processedData = groceryStocks
       .filter(stock => stock.expiryDate) // Only items with expiry dates
       .map(stock => {
@@ -87,10 +88,18 @@ const ExpireTracking = () => {
         
         const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
         
-        // Hide items after 2 days past expiry
+        // Hide items after 2 days past expiry (only hide if they're expired AND have no remaining)
+        // But show items with remaining = 0 if they're not yet 2 days past expiry
         if (daysUntilExpiry < -2) {
           return null;
         }
+        
+        // Always include the stock, even if remaining = 0
+        // This ensures items with 0 remaining are visible and can be tracked
+        // Use nullish coalescing to properly handle remaining = 0 (don't fallback to quantity)
+        const remaining = stock.remaining !== null && stock.remaining !== undefined 
+          ? parseFloat(stock.remaining) 
+          : 0;
         
         return {
           ...stock,
@@ -98,7 +107,7 @@ const ExpireTracking = () => {
           branchName: branch ? branch.name : stock.branch || 'Unknown',
           expiryDate: expiryDate,
           daysUntilExpiry: daysUntilExpiry,
-          remaining: parseFloat(stock.remaining || stock.quantity || 0),
+          remaining: remaining, // Use remaining (can be 0), not quantity
           quantity: parseFloat(stock.quantity || 0)
         };
       })
@@ -122,6 +131,7 @@ const ExpireTracking = () => {
         }
         
         // Apply type filter
+        // Note: 'all' shows everything including items with remaining = 0
         if (filterType === 'expired' && stock.daysUntilExpiry >= 0) return false;
         if (filterType === 'zero' && stock.remaining > 0) return false;
         if (filterType === 'active' && stock.daysUntilExpiry < 0) return false;
@@ -299,7 +309,10 @@ const ExpireTracking = () => {
                         <td>{stock.branchName}</td>
                         <td>{formatDate(stock.addedDate || stock.date)}</td>
                         <td>{stock.quantity}</td>
-                        <td>{stock.remaining}</td>
+                        <td className={stock.remaining === 0 ? 'text-danger fw-bold' : ''}>
+                          {stock.remaining}
+                          {stock.remaining === 0 && <span className="badge bg-danger ms-2">Returned</span>}
+                        </td>
                         <td><strong>{formatDate(stock.expiryDate)}</strong></td>
                         <td>
                           <span className={`badge bg-${statusClass}`}>

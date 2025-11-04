@@ -119,10 +119,11 @@ const AddReturn = () => {
         
         groceryItems.forEach(item => {
           const itemStocks = freshStocks.filter(s => s.itemCode === item.code);
+          // Total Stock = sum of remaining from all batches for this item
           const totalStock = itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
           
-          // Update remaining with fresh value from API - always use API data
-          // Show current remaining stock from database
+          // Initialize remaining with current total stock from database
+          // This ensures the field shows the current available stock
           if (totalStock > 0) {
             remaining[item.code] = item.soldByWeight ? Number(totalStock).toFixed(3) : Math.trunc(totalStock).toString();
           } else {
@@ -323,8 +324,26 @@ const AddReturn = () => {
 
     const updates = [];
     Object.keys(groceryRemaining).forEach(itemCode => {
-      const newRemaining = parseFloat(groceryRemaining[itemCode]);
-      if (!isNaN(newRemaining) && groceryRemaining[itemCode] !== '') {
+      const item = items.find(i => i.code === itemCode);
+      const newRemainingValue = groceryRemaining[itemCode];
+      
+      // Allow 0 as a valid value; only skip when truly empty
+      if (newRemainingValue === '' || newRemainingValue === null || newRemainingValue === undefined) {
+        return;
+      }
+
+      const newRemaining = item && item.soldByWeight 
+        ? parseFloat(newRemainingValue) 
+        : parseFloat(newRemainingValue);
+      
+      if (!isNaN(newRemaining) && newRemaining >= 0) {
+        // Validate newRemaining doesn't exceed total stock
+        const currentTotalStock = getGroceryStockTotal(itemCode);
+        if (newRemaining > currentTotalStock) {
+          alert(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock}).`);
+          return;
+        }
+        
         updates.push({ itemCode, newRemaining });
       }
     });
@@ -341,9 +360,13 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        alert('Grocery remaining updated! Sales recorded.');
-        // Reload stocks to get updated remaining quantities, preserve return quantities if user entered any
-        await loadGroceryStocks(true);
+        alert('Grocery remaining updated! Sales recorded. Total Stock updated.');
+        // Reload stocks to get updated remaining quantities from database
+        // This will refresh Total Stock display on both pages
+        await loadGroceryStocks(false);
+        
+        // Clear return quantities after updating remaining
+        setGroceryReturnQty({});
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update grocery remaining';
@@ -361,6 +384,7 @@ const AddReturn = () => {
 
     const today = new Date().toISOString().split('T')[0];
     const itemsToReturn = [];
+    const returnQuantitiesMap = {}; // Track return quantities for each item
 
     Object.keys(groceryReturnQty).forEach(itemCode => {
       const item = items.find(i => i.code === itemCode);
@@ -390,6 +414,9 @@ const AddReturn = () => {
           returnedQty: returnQty,
           reason: 'waste'
         });
+
+        // Store return quantity to update remaining after return
+        returnQuantitiesMap[itemCode] = returnQty;
       }
     });
 
@@ -399,14 +426,28 @@ const AddReturn = () => {
     }
 
     try {
-      // Process each return
+      // Process each return - backend will update remaining stock in database
       for (const returnItem of itemsToReturn) {
         await groceryAPI.recordReturn(returnItem);
       }
 
-      alert('Grocery returns recorded!');
-      // Reload stocks to refresh remaining quantities after returns (return quantities will be reset)
+      // Small delay to ensure database transactions complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Reload stocks to get updated remaining quantities from database
+      // This will fetch fresh data from backend which has updated remaining values
       await loadGroceryStocks(false);
+
+      // Clear return quantities after successful return
+      setGroceryReturnQty(prev => {
+        const cleared = { ...prev };
+        Object.keys(returnQuantitiesMap).forEach(itemCode => {
+          cleared[itemCode] = '';
+        });
+        return cleared;
+      });
+
+      alert('Grocery returns recorded! Stock quantities updated.');
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to record grocery returns';
       alert(message);
@@ -462,10 +503,12 @@ const AddReturn = () => {
     };
   };
 
-  // Get grocery stock totals
+  // Get grocery stock totals - calculates current remaining from all batches
   const getGroceryStockTotal = (itemCode) => {
-    const itemStocks = groceryStocks.filter(s => s.itemCode === itemCode);
-    return itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || s.quantity || 0), 0);
+    if (!selectedBranch) return 0;
+    const itemStocks = groceryStocks.filter(s => s.itemCode === itemCode && s.branch === selectedBranch);
+    // Total Stock = sum of remaining from all batches (not quantity, but remaining)
+    return itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
   };
 
   const availableBranches = getAvailableBranches();
@@ -695,29 +738,51 @@ const AddReturn = () => {
                       <tr>
                         <td colSpan="5" className="text-center">No grocery items available.</td>
                       </tr>
-                    ) : (
-                      filteredItems.map(item => {
+                    ) : (() => {
+                      // Filter items to only show those with stock > 0
+                      const itemsWithStock = filteredItems.filter(item => {
+                        const totalStock = getGroceryStockTotal(item.code);
+                        return totalStock > 0;
+                      });
+
+                      if (itemsWithStock.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan="5" className="text-center text-warning">
+                              No grocery items with available stock. Please add stocks first before adding returns.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return itemsWithStock.map(item => {
                         const totalStock = getGroceryStockTotal(item.code);
                         return (
                           <tr key={item.code}>
                             <td>{item.name}</td>
                             <td>{item.category}</td>
-                            <td>
+                            <td id={`totalStock_${item.code}`}>
                               {item.soldByWeight 
                                 ? Number(totalStock).toFixed(3) 
-                                : Math.trunc(totalStock)}
+                                : Math.round(totalStock)}
                             </td>
                             <td>
                               <input
                                 type="number"
                                 className="form-control"
-                                value={groceryRemaining[item.code] || ''}
-                                onChange={(e) => setGroceryRemaining({
-                                  ...groceryRemaining,
-                                  [item.code]: e.target.value
-                                })}
+                                id={`groceryRemainQty_${item.code}`}
+                                value={groceryRemaining[item.code] ?? ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setGroceryRemaining({
+                                    ...groceryRemaining,
+                                    [item.code]: value
+                                  });
+                                }}
                                 min="0"
+                                max={totalStock}
                                 step={item.soldByWeight ? "0.001" : "1"}
+                                placeholder={item.soldByWeight ? Number(totalStock).toFixed(3) : Math.trunc(totalStock).toString()}
                               />
                             </td>
                             <td>
@@ -736,8 +801,8 @@ const AddReturn = () => {
                             </td>
                           </tr>
                         );
-                      })
-                    )}
+                      });
+                    })()}
                   </tbody>
                 </table>
               </>
