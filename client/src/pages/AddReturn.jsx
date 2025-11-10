@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, machinesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { formatCurrency } from '../utils/helpers';
+import { exportToExcel, exportToPDF } from '../utils/exportUtils';
 
 const AddReturn = () => {
   const { user } = useAuth();
@@ -511,6 +513,100 @@ const AddReturn = () => {
     return itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
   };
 
+  const buildFilename = (prefix) => {
+    const parts = [prefix];
+    if (selectedBranch) parts.push(selectedBranch.replace(/\s+/g, '_'));
+    if (returnDate) parts.push(returnDate);
+    const base = parts.filter(Boolean).join('_');
+    return base || prefix;
+  };
+
+  const getNormalReturnExportRows = () => {
+    if (!selectedBranch || stocks.length === 0) return [];
+    return filteredItems.reduce((rows, item) => {
+      const stockData = getNormalItemStock(item.code);
+      if (!stockData) return rows;
+      rows.push([
+        item.name,
+        item.category,
+        stockData.totalReturned,
+        returnQuantities[item.code] || 0
+      ]);
+      return rows;
+    }, []);
+  };
+
+  const getGroceryReturnExportRows = () => {
+    if (!selectedBranch) return [];
+    return filteredItems.reduce((rows, item) => {
+      const totalStock = getGroceryStockTotal(item.code);
+      if (totalStock <= 0) return rows;
+      const remaining = groceryRemaining[item.code] ?? '';
+      const returnQty = groceryReturnQty[item.code] || '';
+      rows.push([
+        item.name,
+        item.category,
+        item.soldByWeight ? Number(totalStock).toFixed(3) : Math.round(totalStock),
+        remaining === '' ? '' : remaining,
+        returnQty
+      ]);
+      return rows;
+    }, []);
+  };
+
+  const getMachineReturnExportRows = () => {
+    if (!selectedBranch || machineBatches.length === 0) return [];
+    return machineBatches.map(batch => {
+      const machine = items.find(item => item.code === batch.machineCode);
+      return [
+        machine ? machine.name : batch.machineCode,
+        batch.startValue ?? '',
+        machineEndValues[batch.id] || '',
+        formatCurrency(machine?.price || 0)
+      ];
+    });
+  };
+
+  const handleExport = (format) => {
+    if (!selectedBranch) {
+      alert('Please select a branch first.');
+      return;
+    }
+
+    let headers = [];
+    let rows = [];
+    let title = '';
+    let filename = '';
+
+    if (selectedType === 'Normal Item') {
+      headers = ['Item Name', 'Category', 'Total Returned', 'Entered Return Qty'];
+      rows = getNormalReturnExportRows();
+      title = `Inventory Returns - ${selectedBranch} (${returnDate})`;
+      filename = buildFilename('inventory_returns');
+    } else if (selectedType === 'Grocery Item') {
+      headers = ['Item Name', 'Category', 'Total Stock', 'Remaining Quantity', 'Return Quantity'];
+      rows = getGroceryReturnExportRows();
+      title = `Grocery Returns - ${selectedBranch}`;
+      filename = buildFilename('grocery_returns');
+    } else if (selectedType === 'Machine') {
+      headers = ['Machine Name', 'Start Value', 'End Value', 'Price per Unit (Rs.)'];
+      rows = getMachineReturnExportRows();
+      title = `Machine Returns - ${selectedBranch}`;
+      filename = buildFilename('machine_returns');
+    }
+
+    if (!rows || rows.length === 0) {
+      alert('No data available to export.');
+      return;
+    }
+
+    if (format === 'excel') {
+      exportToExcel({ filename, sheetName: 'Report', headers, rows });
+    } else {
+      exportToPDF({ filename, title, headers, rows });
+    }
+  };
+
   const availableBranches = getAvailableBranches();
   const filteredItems = getFilteredItems();
   const categories = getCategories();
@@ -591,7 +687,7 @@ const AddReturn = () => {
                 ))}
               </select>
             </div>
-            {selectedType !== 'Machine' && (
+            {selectedType === 'Normal Item' && (
               <div className="col-md-3">
                 <input
                   type="date"
@@ -611,6 +707,24 @@ const AddReturn = () => {
           <div className="card-header">
             <div className="d-flex justify-content-between align-items-center">
               <span>Inventory Returns</span>
+              {selectedBranch && (
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => handleExport('excel')}
+                    disabled={getNormalReturnExportRows().length === 0}
+                  >
+                    Export Excel
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => handleExport('pdf')}
+                    disabled={getNormalReturnExportRows().length === 0}
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           <div className="card-body">
@@ -701,7 +815,29 @@ const AddReturn = () => {
       {/* Grocery Items Return Table */}
       {selectedType === 'Grocery Item' && (
         <div className="card mb-4">
-          <div className="card-header">Grocery Returns</div>
+          <div className="card-header">
+            <div className="d-flex justify-content-between align-items-center">
+              <span>Grocery Returns</span>
+              {selectedBranch && (
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => handleExport('excel')}
+                    disabled={getGroceryReturnExportRows().length === 0}
+                  >
+                    Export Excel
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => handleExport('pdf')}
+                    disabled={getGroceryReturnExportRows().length === 0}
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="card-body">
             {!selectedBranch ? (
               <div className="text-center text-warning p-3">
@@ -814,7 +950,29 @@ const AddReturn = () => {
       {/* Machine Return Table */}
       {selectedType === 'Machine' && (
         <div className="card mb-4">
-          <div className="card-header">Machine Returns</div>
+          <div className="card-header">
+            <div className="d-flex justify-content-between align-items-center">
+              <span>Machine Returns</span>
+              {selectedBranch && (
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => handleExport('excel')}
+                    disabled={getMachineReturnExportRows().length === 0}
+                  >
+                    Export Excel
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => handleExport('pdf')}
+                    disabled={getMachineReturnExportRows().length === 0}
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="card-body">
             {!selectedBranch ? (
               <div className="text-center text-warning p-3">

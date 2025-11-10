@@ -135,8 +135,8 @@ const markAsRead = async (req, res) => {
 
 /**
  * Check for expiring items and create notifications
- * This function checks grocery stocks for items expiring within 3 days
- * Creates notifications for items (prefers notifyExpiry enabled items, but includes all if none found)
+ * Sends alerts exactly two days before expiry for grocery items whose
+ * "Notify on Expiry" checkbox is enabled.
  */
 const checkExpiringItems = async () => {
   try {
@@ -144,31 +144,30 @@ const checkExpiringItems = async () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Calculate date 3 days from now (more lenient)
-    const threeDaysLater = new Date(today);
-    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+    // Calculate date exactly 2 days from now
+    const twoDaysLater = new Date(today);
+    twoDaysLater.setDate(twoDaysLater.getDate() + 2);
     
-    console.log(`[Expiry Check] Starting check - Today: ${today.toISOString().split('T')[0]}, 3 days later: ${threeDaysLater.toISOString().split('T')[0]}`);
+    console.log(`[Expiry Check] Starting check - Today: ${today.toISOString().split('T')[0]}, Target date (2 days later): ${twoDaysLater.toISOString().split('T')[0]}`);
     
-    // Get all grocery items expiring within 3 days with notifyExpiry enabled
-    // Also include items where notifyExpiry is NULL (default to enabled)
+    // Get grocery items expiring within the next 2 days (inclusive) with notifyExpiry enabled
     const stocksResult = await pool.request()
       .input('today', sql.Date, today)
-      .input('threeDaysLater', sql.Date, threeDaysLater)
+      .input('twoDaysLater', sql.Date, twoDaysLater)
       .query(`
         SELECT gs.id, gs.batchId, gs.itemCode, gs.branch, gs.quantity, gs.remaining, 
                gs.expiryDate, gs.addedDate, i.name as itemName, i.notifyExpiry, i.itemType
         FROM GroceryStocks gs
         INNER JOIN Items i ON gs.itemCode = i.code
         WHERE gs.expiryDate >= @today 
-          AND gs.expiryDate <= @threeDaysLater
+          AND gs.expiryDate <= @twoDaysLater
           AND gs.remaining > 0
           AND i.itemType = 'Grocery Item'
-          AND (i.notifyExpiry = 1 OR i.notifyExpiry IS NULL)
+          AND i.notifyExpiry = 1
         ORDER BY gs.expiryDate ASC
       `);
 
-    console.log(`[Expiry Check] Found ${stocksResult.recordset.length} stocks expiring within 3 days`);
+    console.log(`[Expiry Check] Found ${stocksResult.recordset.length} stocks expiring within the next 2 days`);
     
     // Log details for debugging
     if (stocksResult.recordset.length > 0) {
@@ -179,12 +178,20 @@ const checkExpiringItems = async () => {
     }
 
     if (stocksResult.recordset.length === 0) {
-      return { checked: 0, created: 0, message: 'No items expiring within 3 days found' };
+      return { checked: 0, created: 0, message: 'No items expiring within 2 days found' };
     }
 
     let notificationsCreated = 0;
     
     for (const stock of stocksResult.recordset) {
+      const expiryDateObj = new Date(stock.expiryDate);
+      const daysUntilExpiry = Math.ceil((expiryDateObj - today) / (1000 * 60 * 60 * 24));
+
+      // Only alert for items expiring today, tomorrow, or in two days
+      if (daysUntilExpiry < 0 || daysUntilExpiry > 2) {
+        continue;
+      }
+
       // Check if notification already exists for this batch
       const existingNotif = await pool.request()
         .input('type', sql.NVarChar, 'expiry')
@@ -203,10 +210,17 @@ const checkExpiringItems = async () => {
 
       // Only create notification if it doesn't exist
       if (existingNotif.recordset.length === 0) {
-        const expiryDateObj = new Date(stock.expiryDate);
-        const daysUntilExpiry = Math.ceil((expiryDateObj - today) / (1000 * 60 * 60 * 24));
         const expiryDateStr = expiryDateObj.toISOString().split('T')[0];
-        const message = `${stock.quantity} ${stock.itemName} will expire in ${daysUntilExpiry} day${daysUntilExpiry !== 1 ? 's' : ''} at ${stock.branch}. Expiry date: ${expiryDateStr}`;
+        const rawQuantity = stock.remaining ?? stock.quantity;
+        const quantityValue = rawQuantity != null ? parseFloat(rawQuantity) : 0;
+        const quantityDisplay = Number.isFinite(quantityValue) ? quantityValue : 0;
+        const formattedQuantity = Number.isInteger(quantityDisplay)
+          ? quantityDisplay.toString()
+          : quantityDisplay.toFixed(3);
+        const timeLabel = daysUntilExpiry === 0
+          ? 'today'
+          : `in ${daysUntilExpiry} day${daysUntilExpiry !== 1 ? 's' : ''}`;
+        const message = `${formattedQuantity} ${stock.itemName} will expire ${timeLabel} at ${stock.branch}. Expiry date: ${expiryDateStr}`;
         
         const notificationId = generateId();
         
@@ -220,7 +234,7 @@ const checkExpiringItems = async () => {
           .input('itemCode', sql.NVarChar, stock.itemCode)
           .input('itemName', sql.NVarChar, stock.itemName)
           .input('batchId', sql.NVarChar, stock.batchId)
-          .input('quantity', sql.Decimal(18, 3), stock.quantity)
+          .input('quantity', sql.Decimal(18, 3), quantityDisplay)
           .input('expiryDate', sql.Date, stock.expiryDate)
           .input('dateAdded', sql.Date, stock.addedDate)
           .input('readBy', sql.NVarChar, JSON.stringify([]))

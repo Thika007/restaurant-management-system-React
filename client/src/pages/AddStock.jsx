@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, machinesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { formatCurrency } from '../utils/helpers';
+import { exportToExcel, exportToPDF } from '../utils/exportUtils';
 
 const AddStock = () => {
   const { user } = useAuth();
@@ -29,7 +31,7 @@ const AddStock = () => {
   const [showMachineModal, setShowMachineModal] = useState(false);
   const [selectedGroceryItem, setSelectedGroceryItem] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
-  const [groceryFormData, setGroceryFormData] = useState({ quantity: '', expiryDate: '' });
+  const [groceryFormData, setGroceryFormData] = useState({ quantity: '', expiryDate: '', addedDate: stockDate });
   const [machineFormData, setMachineFormData] = useState({ startValue: '', date: '' });
 
   // Get available branches based on user role
@@ -207,7 +209,7 @@ const AddStock = () => {
   // Handle grocery stock modal
   const handleShowGroceryModal = (item) => {
     setSelectedGroceryItem(item);
-    setGroceryFormData({ quantity: '', expiryDate: '' });
+    setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
     setShowGroceryModal(true);
   };
 
@@ -215,7 +217,8 @@ const AddStock = () => {
     if (!selectedBranch || !selectedGroceryItem) return;
 
     const quantity = parseFloat(groceryFormData.quantity);
-    if (!quantity || quantity <= 0 || !groceryFormData.expiryDate) {
+    const addedDate = groceryFormData.addedDate || stockDate;
+    if (!quantity || quantity <= 0 || !groceryFormData.expiryDate || !addedDate) {
       alert('Please fill all fields correctly.');
       return;
     }
@@ -226,14 +229,14 @@ const AddStock = () => {
         branch: selectedBranch,
         quantity: quantity,
         expiryDate: groceryFormData.expiryDate,
-        date: stockDate
+        date: addedDate
       });
 
       if (response.data.success) {
         alert('Grocery stock added successfully!');
         setShowGroceryModal(false);
         setSelectedGroceryItem(null);
-        setGroceryFormData({ quantity: '', expiryDate: '' });
+        setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
         // Reload stocks to refresh Total Stock display
         await loadGroceryStocks();
       }
@@ -378,6 +381,96 @@ const AddStock = () => {
     return batch ? { status: 'Active', batch } : { status: 'Not Started', batch: null };
   };
 
+  const buildFilename = (prefix) => {
+    const parts = [prefix];
+    if (selectedBranch) parts.push(selectedBranch.replace(/\s+/g, '_'));
+    if (selectedType === 'Normal Item' && stockDate) parts.push(stockDate);
+    const base = parts.filter(Boolean).join('_');
+    return base || prefix;
+  };
+
+  const getNormalStockExportRows = () => {
+    if (!selectedBranch) return [];
+    return filteredItems.map(item => {
+      const stock = getNormalItemStock(item.code);
+      return [
+        item.name,
+        item.category,
+        formatCurrency(item.price),
+        stock.available,
+        stockQuantities[item.code] || 0
+      ];
+    });
+  };
+
+  const getGroceryStockExportRows = () => {
+    if (!selectedBranch) return [];
+    return filteredItems.map(item => {
+      const availableStock = getGroceryAvailableStock(item.code);
+      const displayStock = item.soldByWeight
+        ? Number(availableStock).toFixed(3)
+        : Math.trunc(availableStock);
+      return [
+        item.name,
+        item.category,
+        formatCurrency(item.price),
+        displayStock
+      ];
+    });
+  };
+
+  const getMachineStockExportRows = () => {
+    if (!selectedBranch) return [];
+    return filteredItems.map(machine => {
+      const { status } = getMachineStatus(machine.code);
+      return [
+        machine.name,
+        formatCurrency(machine.price),
+        status
+      ];
+    });
+  };
+
+  const handleExport = (format) => {
+    if (!selectedBranch) {
+      alert('Please select a branch first.');
+      return;
+    }
+
+    let headers = [];
+    let rows = [];
+    let title = '';
+    let filename = '';
+
+    if (selectedType === 'Normal Item') {
+      headers = ['Item Name', 'Category', 'Price (Rs.)', 'Available Stock', 'Entered Quantity'];
+      rows = getNormalStockExportRows();
+      title = `Inventory Stock - ${selectedBranch} (${stockDate})`;
+      filename = buildFilename('inventory_stock');
+    } else if (selectedType === 'Grocery Item') {
+      headers = ['Item Name', 'Category', 'Price (Rs.)', 'Available Stock'];
+      rows = getGroceryStockExportRows();
+      title = `Grocery Stock - ${selectedBranch}`;
+      filename = buildFilename('grocery_stock');
+    } else if (selectedType === 'Machine') {
+      headers = ['Machine Name', 'Price per Unit (Rs.)', 'Status'];
+      rows = getMachineStockExportRows();
+      title = `Machine Batches - ${selectedBranch}`;
+      filename = buildFilename('machine_stock');
+    }
+
+    if (!rows || rows.length === 0) {
+      alert('No data available to export.');
+      return;
+    }
+
+    if (format === 'excel') {
+      exportToExcel({ filename, sheetName: 'Report', headers, rows });
+    } else {
+      exportToPDF({ filename, title, headers, rows });
+    }
+  };
+
   const availableBranches = getAvailableBranches();
   const filteredItems = getFilteredItems();
   const categories = getCategories();
@@ -480,6 +573,24 @@ const AddStock = () => {
           <div className="card-header">
             <div className="d-flex justify-content-between align-items-center">
               <span>Inventory Stock</span>
+              {selectedBranch && (
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => handleExport('excel')}
+                    disabled={getNormalStockExportRows().length === 0}
+                  >
+                    Export Excel
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => handleExport('pdf')}
+                    disabled={getNormalStockExportRows().length === 0}
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           <div className="card-body">
@@ -551,7 +662,29 @@ const AddStock = () => {
       {/* Grocery Items Stock Table */}
       {selectedType === 'Grocery Item' && (
         <div className="card mb-4">
-          <div className="card-header">Grocery Stock</div>
+          <div className="card-header">
+            <div className="d-flex justify-content-between align-items-center">
+              <span>Grocery Stock</span>
+              {selectedBranch && (
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => handleExport('excel')}
+                    disabled={getGroceryStockExportRows().length === 0}
+                  >
+                    Export Excel
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => handleExport('pdf')}
+                    disabled={getGroceryStockExportRows().length === 0}
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="card-body">
             {!selectedBranch ? (
               <div className="text-center text-warning p-3">
@@ -617,44 +750,62 @@ const AddStock = () => {
               Please select a branch first.
             </div>
           ) : (
-            <table className="table table-hover">
-              <thead className="table-dark">
-                <tr>
-                  <th>Machine Name</th>
-                  <th>Price per Unit (Rs.)</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredItems.length === 0 ? (
+            <>
+              <div className="d-flex justify-content-end gap-2 mb-3">
+                <button
+                  className="btn btn-success btn-sm"
+                  onClick={() => handleExport('excel')}
+                  disabled={getMachineStockExportRows().length === 0}
+                >
+                  Export Excel
+                </button>
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => handleExport('pdf')}
+                  disabled={getMachineStockExportRows().length === 0}
+                >
+                  Export PDF
+                </button>
+              </div>
+              <table className="table table-hover">
+                <thead className="table-dark">
                   <tr>
-                    <td colSpan="4" className="text-center">No machines available.</td>
+                    <th>Machine Name</th>
+                    <th>Price per Unit (Rs.)</th>
+                    <th>Status</th>
+                    <th>Action</th>
                   </tr>
-                ) : (
-                  filteredItems.map(machine => {
-                    const { status } = getMachineStatus(machine.code);
-                    return (
-                      <tr key={machine.code}>
-                        <td>{machine.name}</td>
-                        <td>Rs {parseFloat(machine.price).toFixed(2)}</td>
-                        <td className={status === 'Active' ? 'text-success' : ''}>
-                          {status}
-                        </td>
-                        <td>
-                          <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => handleShowMachineModal(machine)}
-                          >
-                            Select Machine
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredItems.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="text-center">No machines available.</td>
+                    </tr>
+                  ) : (
+                    filteredItems.map(machine => {
+                      const { status } = getMachineStatus(machine.code);
+                      return (
+                        <tr key={machine.code}>
+                          <td>{machine.name}</td>
+                          <td>Rs {parseFloat(machine.price).toFixed(2)}</td>
+                          <td className={status === 'Active' ? 'text-success' : ''}>
+                            {status}
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleShowMachineModal(machine)}
+                            >
+                              Select Machine
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </>
           )}
         </div>
       )}
@@ -672,7 +823,7 @@ const AddStock = () => {
                   onClick={() => {
                     setShowGroceryModal(false);
                     setSelectedGroceryItem(null);
-                    setGroceryFormData({ quantity: '', expiryDate: '' });
+                    setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
                   }}
                 ></button>
               </div>
@@ -713,6 +864,19 @@ const AddStock = () => {
                     required
                   />
                 </div>
+                <div className="mb-3">
+                  <label className="form-label">Added Date</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={groceryFormData.addedDate || ''}
+                    onChange={(e) => setGroceryFormData({
+                      ...groceryFormData,
+                      addedDate: e.target.value
+                    })}
+                    required
+                  />
+                </div>
               </div>
               <div className="modal-footer">
                 <button
@@ -721,7 +885,7 @@ const AddStock = () => {
                   onClick={() => {
                     setShowGroceryModal(false);
                     setSelectedGroceryItem(null);
-                    setGroceryFormData({ quantity: '', expiryDate: '' });
+                    setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
                   }}
                 >
                   Cancel

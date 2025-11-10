@@ -89,10 +89,10 @@ const Layout = () => {
   }, []);
 
   // Load notifications
-  const loadNotifications = async () => {
+  const loadNotifications = async ({ override = false } = {}) => {
     if (!user) return;
     try {
-      if (!notifPollingEnabled) return;
+      if (!notifPollingEnabled && !override) return;
       const params = {
         userId: user.id || user.role,
         userRole: user.role,
@@ -178,8 +178,8 @@ const Layout = () => {
         setTimeout(() => setNotifPollingEnabled(true), 60000);
       }
 
-      // Kick off first load once
-      loadNotifications();
+      // Kick off first load once (override guard so it runs immediately)
+      loadNotifications({ override: true });
 
       // Refresh notifications every 30 seconds
       interval = setInterval(() => {
@@ -203,6 +203,19 @@ const Layout = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, notificationBranchFilter]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (!notifPollingEnabled) return;
+    loadNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifPollingEnabled]);
+
+  useEffect(() => {
+    if (!user) return;
+    loadNotifications({ override: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationBranchFilter]);
 
   // Mark notification as read and remove from UI
   const markNotificationAsRead = async (notificationId, e) => {

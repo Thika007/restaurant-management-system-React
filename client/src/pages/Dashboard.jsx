@@ -20,7 +20,6 @@ const Dashboard = () => {
   });
   // Initialize branch state based on user role
   const [branch, setBranch] = useState(() => {
-    // For non-admin users with assigned branches, auto-select first branch
     if (user && user.role !== 'admin' && user.assignedBranches && user.assignedBranches.length > 0) {
       return user.assignedBranches[0];
     }
@@ -54,6 +53,16 @@ const Dashboard = () => {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === 'admin') return;
+    if (branch) return;
+
+    if (user.assignedBranches && user.assignedBranches.length > 0) {
+      setBranch(user.assignedBranches[0]);
+    }
+  }, [user, branch]);
 
   useEffect(() => {
     if (branches.length > 0 && items.length > 0) {
