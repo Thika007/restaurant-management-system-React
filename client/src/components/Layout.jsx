@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { systemAPI, notificationsAPI, branchesAPI, healthAPI } from '../services/api';
 import Dashboard from '../pages/Dashboard';
 import Inventory from '../pages/Inventory';
@@ -15,6 +16,7 @@ import UserManagement from '../pages/UserManagement';
 
 const Layout = () => {
   const { user, logout } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -32,7 +34,7 @@ const Layout = () => {
 
   const handleClearData = async () => {
     if (!user || user.role !== 'admin') {
-      alert('Only admins can clear transaction data.');
+      showWarning('Only admins can clear transaction data.');
       return;
     }
 
@@ -54,15 +56,15 @@ const Layout = () => {
       try {
         const response = await systemAPI.clearTransactionData();
         if (response.data.success) {
-          alert('All transaction data cleared successfully!\n\nDashboard, Reports, and Expire Tracking will now show no data.\nUsers, branches, and items are preserved.');
+          showSuccess('All transaction data cleared successfully! Dashboard, Reports, and Expire Tracking will now show no data. Users, branches, and items are preserved.');
           // Reload the page to refresh data
           window.location.reload();
         } else {
-          alert('Failed to clear data: ' + (response.data.message || 'Unknown error'));
+          showError('Failed to clear data: ' + (response.data.message || 'Unknown error'));
         }
       } catch (error) {
         console.error('Error clearing data:', error);
-        alert('Error clearing data: ' + (error.response?.data?.message || error.message || 'Unknown error'));
+        showError('Error clearing data: ' + (error.response?.data?.message || error.message || 'Unknown error'));
       }
     }
   };

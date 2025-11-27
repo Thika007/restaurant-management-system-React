@@ -3,9 +3,11 @@ import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, machinesAPI } from '../se
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency } from '../utils/helpers';
 import { exportToExcel, exportToPDF } from '../utils/exportUtils';
+import { useToast } from '../context/ToastContext';
 
 const AddReturn = () => {
   const { user } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [selectedType, setSelectedType] = useState('Normal Item');
   const [loading, setLoading] = useState(true);
 
@@ -229,12 +231,12 @@ const AddReturn = () => {
   // Normal Items - Update Returns
   const handleUpdateReturns = async () => {
     if (!selectedBranch) {
-      alert('Please select a branch first.');
+      showWarning('Please select a branch first.');
       return;
     }
 
     if (isBatchFinished) {
-      alert(`This batch is already finished for ${selectedBranch} (${returnDate}).`);
+      showWarning(`This batch is already finished for ${selectedBranch} (${returnDate}).`);
       return;
     }
 
@@ -247,7 +249,7 @@ const AddReturn = () => {
     });
 
     if (itemsToReturn.length === 0) {
-      alert('No return quantities entered.');
+      showWarning('No return quantities entered.');
       return;
     }
 
@@ -259,7 +261,7 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        alert('Returns updated successfully!');
+        showSuccess('Returns updated successfully!');
         // Reset quantities
         const resetQuantities = {};
         Object.keys(returnQuantities).forEach(code => {
@@ -270,7 +272,7 @@ const AddReturn = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update returns';
-      alert(message);
+      showError(message);
       console.error('Update returns error:', error);
     }
   };
@@ -287,16 +289,16 @@ const AddReturn = () => {
   // Normal Items - Finish Batch
   const handleFinishBatch = async () => {
     if (!selectedBranch) {
-      alert('Please select a branch.');
+      showWarning('Please select a branch.');
       return;
     }
 
     if (isBatchFinished) {
-      alert(`This batch is already finished for ${selectedBranch} (${returnDate}).`);
+      showWarning(`This batch is already finished for ${selectedBranch} (${returnDate}).`);
       return;
     }
 
-    if (!confirm('Are you sure you want to finish this batch? This will calculate sold quantities and lock the batch.')) {
+    if (!window.confirm('Are you sure you want to finish this batch? This will calculate sold quantities and lock the batch.')) {
       return;
     }
 
@@ -307,12 +309,12 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        alert('Batch finished! Sold quantities calculated.');
+        showSuccess('Batch finished! Sold quantities calculated.');
         loadNormalStocks();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to finish batch';
-      alert(message);
+      showError(message);
       console.error('Finish batch error:', error);
     }
   };
@@ -320,7 +322,7 @@ const AddReturn = () => {
   // Grocery - Update Remaining (records sales)
   const handleUpdateGroceryRemaining = async () => {
     if (!selectedBranch) {
-      alert('Please select a branch.');
+      showWarning('Please select a branch.');
       return;
     }
 
@@ -342,7 +344,7 @@ const AddReturn = () => {
         // Validate newRemaining doesn't exceed total stock
         const currentTotalStock = getGroceryStockTotal(itemCode);
         if (newRemaining > currentTotalStock) {
-          alert(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock}).`);
+          showError(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock}).`);
           return;
         }
         
@@ -351,7 +353,7 @@ const AddReturn = () => {
     });
 
     if (updates.length === 0) {
-      alert('No valid remaining quantities entered.');
+      showWarning('No valid remaining quantities entered.');
       return;
     }
 
@@ -362,7 +364,7 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        alert('Grocery remaining updated! Sales recorded. Total Stock updated.');
+        showSuccess('Grocery remaining updated! Sales recorded. Total Stock updated.');
         // Reload stocks to get updated remaining quantities from database
         // This will refresh Total Stock display on both pages
         await loadGroceryStocks(false);
@@ -372,7 +374,7 @@ const AddReturn = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update grocery remaining';
-      alert(message);
+      showError(message);
       console.error('Update grocery remaining error:', error);
     }
   };
@@ -380,7 +382,7 @@ const AddReturn = () => {
   // Grocery - Update Returns
   const handleUpdateGroceryReturns = async () => {
     if (!selectedBranch) {
-      alert('Please select a branch.');
+      showWarning('Please select a branch.');
       return;
     }
 
@@ -404,7 +406,7 @@ const AddReturn = () => {
         // Validate return quantity doesn't exceed available stock
         const totalStock = getGroceryStockTotal(itemCode);
         if (returnQty > totalStock) {
-          alert(`${item?.name || itemCode}: Return quantity (${returnQty}) cannot exceed available stock (${totalStock}).`);
+          showError(`${item?.name || itemCode}: Return quantity (${returnQty}) cannot exceed available stock (${totalStock}).`);
           return;
         }
         
@@ -423,7 +425,7 @@ const AddReturn = () => {
     });
 
     if (itemsToReturn.length === 0) {
-      alert('No valid grocery return quantities entered.');
+      showWarning('No valid grocery return quantities entered.');
       return;
     }
 
@@ -449,10 +451,10 @@ const AddReturn = () => {
         return cleared;
       });
 
-      alert('Grocery returns recorded! Stock quantities updated.');
+      showSuccess('Grocery returns recorded! Stock quantities updated.');
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to record grocery returns';
-      alert(message);
+      showError(message);
       console.error('Update grocery returns error:', error);
     }
   };
@@ -462,18 +464,18 @@ const AddReturn = () => {
     const endValue = parseInt(machineEndValues[batchId]);
     
     if (isNaN(endValue) || endValue < 0) {
-      alert('Please enter a valid end value.');
+      showWarning('Please enter a valid end value.');
       return;
     }
 
     const batch = machineBatches.find(b => b.id === batchId);
     if (!batch) {
-      alert('Batch not found.');
+      showError('Batch not found.');
       return;
     }
 
     if (endValue < batch.startValue) {
-      alert('End value cannot be less than start value.');
+      showError('End value cannot be less than start value.');
       return;
     }
 
@@ -483,12 +485,12 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        alert(`Batch completed! Sold ${response.data.soldQty} units. Total: Rs ${response.data.totalCash?.toFixed(2) || '0.00'}`);
+        showSuccess(`Batch completed! Sold ${response.data.soldQty} units. Total: Rs ${response.data.totalCash?.toFixed(2) || '0.00'}`);
         loadMachineBatches();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to finish machine batch';
-      alert(message);
+      showError(message);
       console.error('Finish machine batch error:', error);
     }
   };
@@ -569,7 +571,7 @@ const AddReturn = () => {
 
   const handleExport = (format) => {
     if (!selectedBranch) {
-      alert('Please select a branch first.');
+      showWarning('Please select a branch first.');
       return;
     }
 
@@ -596,7 +598,7 @@ const AddReturn = () => {
     }
 
     if (!rows || rows.length === 0) {
-      alert('No data available to export.');
+      showWarning('No data available to export.');
       return;
     }
 

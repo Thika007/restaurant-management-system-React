@@ -85,6 +85,7 @@ function showMachineStartModal(code, name, price) {
   document.getElementById('machineStartName').textContent = name;
   document.getElementById('machineStartPrice').textContent = `Rs ${price}`;
   document.getElementById('machineStartValue').value = '';
+  // Always set today's date as default - user can change it if needed
   document.getElementById('machineStartDate').value = getCurrentDate();
   
   // Check if there's an active batch for this machine AND current branch
@@ -96,7 +97,8 @@ function showMachineStartModal(code, name, price) {
   
   if (activeBatch) {
       document.getElementById('machineStartValue').value = activeBatch.startValue;
-      document.getElementById('machineStartDate').value = activeBatch.date;
+      // Keep today's date as default even when updating - user can change it
+      document.getElementById('machineStartDate').value = getCurrentDate();
       document.getElementById('updateStartBtn').style.display = 'block';
       document.getElementById('startMachineBtn').style.display = 'none';
       document.getElementById('machineStartStatus').textContent = 'Active Batch Exists';
@@ -147,8 +149,9 @@ function updateMachineStartValue() {
   }
   
   let machineBatches = JSON.parse(localStorage.getItem('machineBatches')) || [];
+  // Fix: Check both machineCode AND branch to prevent updating wrong machine
   const batchIndex = machineBatches.findIndex(batch => 
-      batch.machineCode === machineCode && batch.status === 'active'
+      batch.machineCode === machineCode && batch.status === 'active' && batch.branch === branch
   );
   
   if (batchIndex !== -1) {
@@ -158,6 +161,8 @@ function updateMachineStartValue() {
       alert('Start value updated successfully!');
       bootstrap.Modal.getInstance(document.getElementById('startMachineModal')).hide();
       loadMachines();
+  } else {
+      alert('Active batch not found for this machine and branch.');
   }
 }
 

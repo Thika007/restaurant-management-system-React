@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { cashAPI, branchesAPI, stocksAPI, machinesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 const CashManagement = () => {
   const { user } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [loading, setLoading] = useState(true);
   const [cashEntries, setCashEntries] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -65,7 +67,7 @@ const CashManagement = () => {
       }
     } catch (error) {
       console.error('Load initial data error:', error);
-      alert('Failed to load data');
+      showError('Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -166,20 +168,20 @@ const CashManagement = () => {
     e.preventDefault();
 
     if (!formData.branch) {
-      alert('Please select a branch.');
+      showWarning('Please select a branch.');
       return;
     }
     if (!formData.date) {
-      alert('Please select a date.');
+      showWarning('Please select a date.');
       return;
     }
     if (!formData.actualCash || parseFloat(formData.actualCash) < 0) {
-      alert('Please enter actual cash amount.');
+      showWarning('Please enter actual cash amount.');
       return;
     }
 
     if (existingEntry) {
-      alert('A cash entry for this branch and date already exists.');
+      showWarning('A cash entry for this branch and date already exists.');
       return;
     }
 
@@ -195,7 +197,7 @@ const CashManagement = () => {
     try {
       const expectedRes = await cashAPI.getExpected({ branch: formData.branch, date: formData.date });
       if (!expectedRes.data.success || expectedRes.data.expected <= 0) {
-        alert('No sales recorded for this branch and date. Cash entry is not required.');
+        showInfo('No sales recorded for this branch and date. Cash entry is not required.');
         return;
       }
 
@@ -214,13 +216,13 @@ const CashManagement = () => {
       });
 
       if (response.data.success) {
-        alert('Cash entry added successfully!');
+        showSuccess('Cash entry added successfully!');
         closeAddModal();
         loadCashEntries();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to create cash entry';
-      alert(message);
+      showError(message);
       console.error('Create cash entry error:', error);
     }
   };

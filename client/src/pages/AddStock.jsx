@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, machinesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { formatCurrency } from '../utils/helpers';
+import { formatCurrency, getCurrentDate } from '../utils/helpers';
 import { exportToExcel, exportToPDF } from '../utils/exportUtils';
+import { useToast } from '../context/ToastContext';
 
 const AddStock = () => {
   const { user } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [selectedType, setSelectedType] = useState('Normal Item');
   const [loading, setLoading] = useState(true);
 
@@ -160,12 +162,12 @@ const AddStock = () => {
   // Update Normal Items stocks
   const handleUpdateStocks = async () => {
     if (!selectedBranch) {
-      alert('Please select a branch first.');
+      showWarning('Please select a branch first.');
       return;
     }
 
     if (isBatchFinished) {
-      alert(`This batch is already finished for ${selectedBranch} (${stockDate}). Cannot add stock.`);
+      showWarning(`This batch is already finished for ${selectedBranch} (${stockDate}). Cannot add stock.`);
       return;
     }
 
@@ -178,7 +180,7 @@ const AddStock = () => {
     });
 
     if (itemsToUpdate.length === 0) {
-      alert('No stock quantities entered.');
+      showWarning('No stock quantities entered.');
       return;
     }
 
@@ -190,7 +192,7 @@ const AddStock = () => {
       });
 
       if (response.data.success) {
-        alert('Stocks updated successfully!');
+        showSuccess('Stocks updated successfully!');
         // Reset quantities
         const resetQuantities = {};
         Object.keys(stockQuantities).forEach(code => {
@@ -201,7 +203,7 @@ const AddStock = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update stocks';
-      alert(message);
+      showError(message);
       console.error('Update stocks error:', error);
     }
   };
@@ -219,7 +221,7 @@ const AddStock = () => {
     const quantity = parseFloat(groceryFormData.quantity);
     const addedDate = groceryFormData.addedDate || stockDate;
     if (!quantity || quantity <= 0 || !groceryFormData.expiryDate || !addedDate) {
-      alert('Please fill all fields correctly.');
+      showWarning('Please fill all fields correctly.');
       return;
     }
 
@@ -233,7 +235,7 @@ const AddStock = () => {
       });
 
       if (response.data.success) {
-        alert('Grocery stock added successfully!');
+        showSuccess('Grocery stock added successfully!');
         setShowGroceryModal(false);
         setSelectedGroceryItem(null);
         setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
@@ -242,7 +244,7 @@ const AddStock = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to add grocery stock';
-      alert(message);
+      showError(message);
       console.error('Add grocery stock error:', error);
     }
   };
@@ -250,6 +252,9 @@ const AddStock = () => {
   // Handle machine batch modal
   const handleShowMachineModal = async (machine) => {
     setSelectedMachine(machine);
+    
+    // Always default to today's date - user can change it if needed
+    const todayDate = getCurrentDate();
     
     // Check for active batch
     try {
@@ -263,7 +268,7 @@ const AddStock = () => {
         const activeBatch = response.data.batches[0];
         setMachineFormData({
           startValue: activeBatch.startValue.toString(),
-          date: activeBatch.date
+          date: todayDate // Always default to today's date, user can change it
         });
         // Set active batch for this machine
         setMachineBatches(response.data.batches);
@@ -287,14 +292,14 @@ const AddStock = () => {
         
         setMachineFormData({
           startValue: lastEndValue,
-          date: stockDate
+          date: todayDate // Always default to today's date
         });
         setMachineBatches([]);
       }
     } catch (error) {
       setMachineFormData({
         startValue: '',
-        date: stockDate
+        date: todayDate // Always default to today's date
       });
       setMachineBatches([]);
     }
@@ -307,12 +312,17 @@ const AddStock = () => {
 
     const startValue = parseInt(machineFormData.startValue);
     if (isNaN(startValue) || startValue < 0) {
-      alert('Please enter a valid start value.');
+      showWarning('Please enter a valid start value.');
+      return;
+    }
+
+    if (!machineFormData.date) {
+      showWarning('Please select a date.');
       return;
     }
 
     try {
-      // Check if active batch exists
+      // Check if active batch exists for this specific machine and branch
       const checkRes = await machinesAPI.getBatches({
         branch: selectedBranch,
         machineCode: selectedMachine.code,
@@ -320,17 +330,31 @@ const AddStock = () => {
       });
 
       if (checkRes.data.success && checkRes.data.batches.length > 0) {
-        // Update existing batch
-        const batch = checkRes.data.batches[0];
-        const updateRes = await machinesAPI.updateBatch(batch.id, {
-          startValue: startValue,
-          date: machineFormData.date
-        });
+        // Verify the batch belongs to the correct machine and branch
+        const batch = checkRes.data.batches.find(b => 
+          b.machineCode === selectedMachine.code && 
+          b.branch === selectedBranch && 
+          b.status === 'active'
+        );
 
-        if (updateRes.data.success) {
-          alert('Start value updated successfully!');
-          setShowMachineModal(false);
-          loadMachineBatches();
+        if (batch) {
+          // Update existing batch - ensure we're updating the correct one by passing branch and machineCode
+          const updateRes = await machinesAPI.updateBatch(batch.id, {
+            startValue: startValue,
+            date: machineFormData.date,
+            branch: selectedBranch,
+            machineCode: selectedMachine.code
+          });
+
+          if (updateRes.data.success) {
+            showSuccess('Start value updated successfully!');
+            setShowMachineModal(false);
+            setSelectedMachine(null);
+            setMachineFormData({ startValue: '', date: '' });
+            loadMachineBatches();
+          }
+        } else {
+          showError('Active batch not found for this machine and branch.');
         }
       } else {
         // Start new batch
@@ -342,14 +366,16 @@ const AddStock = () => {
         });
 
         if (response.data.success) {
-          alert('Machine batch started successfully!');
+          showSuccess('Machine batch started successfully!');
           setShowMachineModal(false);
+          setSelectedMachine(null);
+          setMachineFormData({ startValue: '', date: '' });
           loadMachineBatches();
         }
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to start/update batch';
-      alert(message);
+      showError(message);
       console.error('Start machine batch error:', error);
     }
   };
@@ -433,7 +459,7 @@ const AddStock = () => {
 
   const handleExport = (format) => {
     if (!selectedBranch) {
-      alert('Please select a branch first.');
+      showWarning('Please select a branch first.');
       return;
     }
 
@@ -460,7 +486,7 @@ const AddStock = () => {
     }
 
     if (!rows || rows.length === 0) {
-      alert('No data available to export.');
+      showWarning('No data available to export.');
       return;
     }
 
@@ -979,7 +1005,7 @@ const AddStock = () => {
                 >
                   Cancel
                 </button>
-                {hasActiveBatch && (
+                {hasActiveBatch ? (
                   <button
                     type="button"
                     className="btn btn-warning"
@@ -987,14 +1013,15 @@ const AddStock = () => {
                   >
                     Update Start Value
                   </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleStartMachineBatch}
+                  >
+                    Start Machine
+                  </button>
                 )}
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleStartMachineBatch}
-                >
-                  {hasActiveBatch ? 'Update Start Value' : 'Start Machine'}
-                </button>
               </div>
             </div>
           </div>

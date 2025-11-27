@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useToast } from '../context/ToastContext';
 import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, transfersAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { getCurrentDate } from '../utils/helpers';
 
 const InternalTransfer = () => {
   const { user } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [loading, setLoading] = useState(true);
   const [selectedType, setSelectedType] = useState('Normal Item');
   
@@ -16,6 +19,7 @@ const InternalTransfer = () => {
   // Selection states
   const [senderBranch, setSenderBranch] = useState('');
   const [receiverBranch, setReceiverBranch] = useState('');
+  const [transferDate, setTransferDate] = useState(getCurrentDate());
   const [filterCategory, setFilterCategory] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -42,7 +46,7 @@ const InternalTransfer = () => {
     loadInitialData();
   }, []);
 
-  // Load stocks when branches or type changes
+  // Load stocks when branches, type, or date changes
   useEffect(() => {
     if (senderBranch && receiverBranch && senderBranch !== receiverBranch) {
       loadStocks();
@@ -51,7 +55,7 @@ const InternalTransfer = () => {
       setGroceryStocks([]);
       setTransferQuantities({});
     }
-  }, [senderBranch, receiverBranch, selectedType]);
+  }, [senderBranch, receiverBranch, selectedType, transferDate]);
 
   const loadInitialData = async () => {
     try {
@@ -76,17 +80,15 @@ const InternalTransfer = () => {
 
   const loadStocks = async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      
       if (selectedType === 'Normal Item') {
         // Check if batch is finished for either branch - if so, block transfer
         const [senderCheck, receiverCheck] = await Promise.all([
-          stocksAPI.get({ date: today, branch: senderBranch }),
-          stocksAPI.get({ date: today, branch: receiverBranch })
+          stocksAPI.get({ date: transferDate, branch: senderBranch }),
+          stocksAPI.get({ date: transferDate, branch: receiverBranch })
         ]);
 
         if (senderCheck.data.isFinished) {
-          setBatchFinishedMessage(`Cannot transfer: ${senderBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
+          setBatchFinishedMessage(`Cannot transfer: ${senderBranch} has finished batch for ${transferDate}. There are no items available for transfer when batch is finished.`);
           setShowBatchFinishedModal(true);
           setStocks([]);
           setTransferQuantities({});
@@ -94,7 +96,7 @@ const InternalTransfer = () => {
         }
 
         if (receiverCheck.data.isFinished) {
-          setBatchFinishedMessage(`Cannot transfer: ${receiverBranch} has finished batch for today (${today}). There are no items available for transfer when batch is finished.`);
+          setBatchFinishedMessage(`Cannot transfer: ${receiverBranch} has finished batch for ${transferDate}. There are no items available for transfer when batch is finished.`);
           setShowBatchFinishedModal(true);
           setStocks([]);
           setTransferQuantities({});
@@ -107,13 +109,13 @@ const InternalTransfer = () => {
           const senderStocks = senderCheck.data.stocks.map(stock => ({
             ...stock,
             branch: senderBranch,
-            date: today
+            date: transferDate
           }));
           
           const receiverStocks = receiverCheck.data.stocks.map(stock => ({
             ...stock,
             branch: receiverBranch,
-            date: today
+            date: transferDate
           }));
           
           const allStocks = [...senderStocks, ...receiverStocks];
@@ -128,14 +130,29 @@ const InternalTransfer = () => {
           setTransferQuantities(quantities);
         }
       } else {
-        // Load grocery stocks
+        // Load grocery stocks using historical stock calculation
         const [senderRes, receiverRes] = await Promise.all([
-          groceryAPI.getStocks({ branch: senderBranch }),
-          groceryAPI.getStocks({ branch: receiverBranch })
+          groceryAPI.getStocksByDate({ branch: senderBranch, date: transferDate }),
+          groceryAPI.getStocksByDate({ branch: receiverBranch, date: transferDate })
         ]);
 
         if (senderRes.data.success && receiverRes.data.success) {
-          setGroceryStocks([...senderRes.data.stocks, ...receiverRes.data.stocks]);
+          // Format stocks to match expected structure
+          const senderStocks = senderRes.data.stocks.map(stock => ({
+            itemCode: stock.itemCode,
+            branch: senderBranch,
+            remaining: stock.available, // Use calculated available stock
+            date: transferDate
+          }));
+          
+          const receiverStocks = receiverRes.data.stocks.map(stock => ({
+            itemCode: stock.itemCode,
+            branch: receiverBranch,
+            remaining: stock.available, // Use calculated available stock
+            date: transferDate
+          }));
+          
+          setGroceryStocks([...senderStocks, ...receiverStocks]);
           
           // Initialize transfer quantities
           const quantities = {};
@@ -210,17 +227,16 @@ const InternalTransfer = () => {
   // Process transfer
   const handleProcessTransfer = async () => {
     if (!senderBranch || !receiverBranch) {
-      alert('Please select both sender and receiver branches.');
+      showWarning('Please select both sender and receiver branches.');
       return;
     }
 
     if (senderBranch === receiverBranch) {
-      alert('Sender and receiver branches must be different.');
+      showWarning('Sender and receiver branches must be different.');
       return;
     }
 
     // Validate and collect transfer items
-    const today = new Date().toISOString().split('T')[0];
     const transferItems = [];
     const filteredItems = getFilteredItems();
 
@@ -235,7 +251,7 @@ const InternalTransfer = () => {
           : getGroceryItemStock(item.code, senderBranch);
 
         if (qty > senderStock) {
-          alert(`Cannot transfer ${qty} of ${item.name}. Only ${senderStock} available at ${senderBranch}.`);
+          showError(`Cannot transfer ${qty} of ${item.name}. Only ${senderStock} available at ${senderBranch} for ${transferDate}.`);
           return;
         }
 
@@ -249,7 +265,7 @@ const InternalTransfer = () => {
     }
 
     if (transferItems.length === 0) {
-      alert('Please enter quantities to transfer.');
+      showWarning('Please enter quantities to transfer.');
       return;
     }
 
@@ -257,17 +273,17 @@ const InternalTransfer = () => {
     if (selectedType === 'Normal Item') {
       try {
         const [senderCheck, receiverCheck] = await Promise.all([
-          stocksAPI.getBatchStatus({ date: today, branch: senderBranch }),
-          stocksAPI.getBatchStatus({ date: today, branch: receiverBranch })
+          stocksAPI.getBatchStatus({ date: transferDate, branch: senderBranch }),
+          stocksAPI.getBatchStatus({ date: transferDate, branch: receiverBranch })
         ]);
 
         if (senderCheck.data.isFinished) {
-          alert(`Cannot transfer: ${senderBranch} has finished batch for today.`);
+          showError(`Cannot transfer: ${senderBranch} has finished batch for ${transferDate}.`);
           return;
         }
 
         if (receiverCheck.data.isFinished) {
-          alert(`Cannot transfer: ${receiverBranch} has finished batch for today.`);
+          showError(`Cannot transfer: ${receiverBranch} has finished batch for ${transferDate}.`);
           return;
         }
       } catch (error) {
@@ -281,7 +297,7 @@ const InternalTransfer = () => {
       senderBranch,
       receiverBranch,
       itemType: selectedType,
-      date: today
+      date: transferDate
     };
 
     setTransferData(data);
@@ -306,7 +322,7 @@ const InternalTransfer = () => {
       });
 
       if (response.data.success) {
-        alert('Transfer completed successfully!');
+        showSuccess('Transfer completed successfully!');
         handleClearForm();
         setShowConfirmModal(false);
         setTransferData(null);
@@ -315,7 +331,7 @@ const InternalTransfer = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to process transfer';
-      alert(message);
+      showError(message);
       console.error('Process transfer error:', error);
     }
   };
@@ -324,6 +340,7 @@ const InternalTransfer = () => {
   const handleClearForm = () => {
     setSenderBranch('');
     setReceiverBranch('');
+    setTransferDate(getCurrentDate());
     setFilterCategory('');
     setSearchTerm('');
     setTransferQuantities({});
@@ -430,6 +447,24 @@ const InternalTransfer = () => {
                   <option key={branch.name} value={branch.name}>{branch.name}</option>
                 ))}
               </select>
+            </div>
+          </div>
+          <div className="row g-3 mt-2">
+            <div className="col-md-3">
+              <label className="form-label">Transfer Date</label>
+              <input
+                type="date"
+                className="form-control"
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+                max={getCurrentDate()}
+              />
+              {selectedType === 'Grocery Item' && (
+                <small className="text-muted">
+                  <i className="fas fa-info-circle me-1"></i>
+                  Shows stock available on selected date (historical calculation).
+                </small>
+              )}
             </div>
           </div>
         </div>

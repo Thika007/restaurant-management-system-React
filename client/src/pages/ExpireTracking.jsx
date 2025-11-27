@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { groceryAPI, branchesAPI, itemsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 const ExpireTracking = () => {
   const { user } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [loading, setLoading] = useState(true);
   
   // Data states
@@ -146,7 +148,7 @@ const ExpireTracking = () => {
 
   const handleRefresh = async () => {
     await loadInitialData();
-    alert('Expiry table refreshed!');
+    showSuccess('Expiry table refreshed!');
   };
 
   const formatDate = (date) => {

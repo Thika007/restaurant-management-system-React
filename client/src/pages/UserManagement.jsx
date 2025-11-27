@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useToast } from '../context/ToastContext';
 import { usersAPI, branchesAPI } from '../services/api';
 
 const UserManagement = () => {
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -64,7 +66,7 @@ const UserManagement = () => {
       }
     } catch (error) {
       console.error('Load initial data error:', error);
-      alert('Failed to load data');
+      showError('Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -107,7 +109,7 @@ const UserManagement = () => {
       }
     } catch (error) {
       console.error('Load user error:', error);
-      alert('Failed to load user data');
+      showError('Failed to load user data');
     }
   };
 
@@ -187,17 +189,17 @@ const UserManagement = () => {
     e.preventDefault();
 
     if (!addFormData.username || !addFormData.fullName || !addFormData.password || !addFormData.confirmPassword) {
-      alert('Please fill all required fields.');
+      showWarning('Please fill all required fields.');
       return;
     }
 
     if (addFormData.password !== addFormData.confirmPassword) {
-      alert('Password and Confirm Password do not match.');
+      showWarning('Password and Confirm Password do not match.');
       return;
     }
 
     if (addFormData.password.length < 6) {
-      alert('Password must be at least 6 characters long.');
+      showWarning('Password must be at least 6 characters long.');
       return;
     }
 
@@ -211,13 +213,13 @@ const UserManagement = () => {
       });
 
       if (response.data.success) {
-        alert('User added successfully!');
+        showSuccess('User added successfully!');
         closeAddModal();
         loadInitialData();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to create user';
-      alert(message);
+      showError(message);
       console.error('Create user error:', error);
     }
   };
@@ -226,18 +228,18 @@ const UserManagement = () => {
     e.preventDefault();
 
     if (!editFormData.username || !editFormData.fullName) {
-      alert('Please fill all required fields.');
+      showWarning('Please fill all required fields.');
       return;
     }
 
     // If password is provided, validate it
     if (editFormData.password) {
       if (editFormData.password !== editFormData.confirmPassword) {
-        alert('Password and Confirm Password do not match.');
+        showWarning('Password and Confirm Password do not match.');
         return;
       }
       if (editFormData.password.length < 6) {
-        alert('Password must be at least 6 characters long.');
+        showWarning('Password must be at least 6 characters long.');
         return;
       }
     }
@@ -264,13 +266,13 @@ const UserManagement = () => {
       const response = await usersAPI.update(editingUser.id, updateData);
 
       if (response.data.success) {
-        alert('User updated successfully!');
+        showSuccess('User updated successfully!');
         closeEditModal();
         loadInitialData();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update user';
-      alert(message);
+      showError(message);
       console.error('Update user error:', error);
     }
   };
@@ -283,12 +285,12 @@ const UserManagement = () => {
     try {
       const response = await usersAPI.delete(userId);
       if (response.data.success) {
-        alert('User deleted successfully!');
+        showSuccess('User deleted successfully!');
         loadInitialData();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to delete user';
-      alert(message);
+      showError(message);
       console.error('Delete user error:', error);
     }
   };

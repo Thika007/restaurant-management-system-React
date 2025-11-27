@@ -1,8 +1,10 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Layout from './components/Layout';
+import './styles/toast.css';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -31,7 +33,8 @@ function App() {
   // Default redirect: if not loading and no user, go to login
   // If user exists, redirect to dashboard for root path
   return (
-    <Routes>
+    <ToastProvider>
+      <Routes>
       <Route 
         path="/login" 
         element={
@@ -61,6 +64,7 @@ function App() {
         }
       />
     </Routes>
+    </ToastProvider>
   );
 }
 

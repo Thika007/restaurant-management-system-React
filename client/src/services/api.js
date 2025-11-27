@@ -84,6 +84,7 @@ export const stocksAPI = {
 // Grocery API
 export const groceryAPI = {
   getStocks: (params) => api.get('/grocery/stocks', { params }),
+  getStocksByDate: (params) => api.get('/grocery/stocks-by-date', { params }),
   addStock: (data) => api.post('/grocery/stocks', data),
   getSales: (params) => api.get('/grocery/sales', { params }),
   recordSale: (data) => api.post('/grocery/sales', data),

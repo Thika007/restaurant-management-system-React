@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useToast } from '../context/ToastContext';
 import { branchesAPI } from '../services/api';
 
 const BranchManagement = () => {
@@ -27,7 +28,7 @@ const BranchManagement = () => {
       }
     } catch (error) {
       console.error('Load branches error:', error);
-      alert('Failed to load branches');
+      showError('Failed to load branches');
     } finally {
       setLoading(false);
     }
@@ -73,7 +74,7 @@ const BranchManagement = () => {
     e.preventDefault();
 
     if (!formData.name || !formData.address || !formData.manager) {
-      alert('Please fill all required fields (Name, Address, Manager).');
+      showWarning('Please fill all required fields (Name, Address, Manager).');
       return;
     }
 
@@ -82,7 +83,7 @@ const BranchManagement = () => {
         // Update existing branch
         const response = await branchesAPI.update(editingBranch.name, formData);
         if (response.data.success) {
-          alert('Branch updated successfully!');
+          showSuccess('Branch updated successfully!');
           closeModal();
           loadBranches();
         }
@@ -90,14 +91,14 @@ const BranchManagement = () => {
         // Create new branch
         const response = await branchesAPI.create(formData);
         if (response.data.success) {
-          alert('Branch added successfully!');
+          showSuccess('Branch added successfully!');
           closeModal();
           loadBranches();
         }
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to save branch';
-      alert(message);
+      showError(message);
       console.error('Save branch error:', error);
     }
   };
@@ -110,12 +111,12 @@ const BranchManagement = () => {
     try {
       const response = await branchesAPI.delete(branchName);
       if (response.data.success) {
-        alert('Branch deleted successfully!');
+        showSuccess('Branch deleted successfully!');
         loadBranches();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to delete branch';
-      alert(message);
+      showError(message);
       console.error('Delete branch error:', error);
     }
   };

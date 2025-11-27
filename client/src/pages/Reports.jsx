@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { reportsAPI, branchesAPI, itemsAPI, cashAPI, transfersAPI, stocksAPI, groceryAPI, machinesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 const Reports = () => {
   const { user } = useAuth();
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState([]);
   const [tableHead, setTableHead] = useState([]);
@@ -65,7 +67,7 @@ const Reports = () => {
       }
     } catch (error) {
       console.error('Load initial data error:', error);
-      alert('Failed to load data');
+      showError('Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -97,7 +99,7 @@ const Reports = () => {
       }
     } catch (error) {
       console.error('Generate report error:', error);
-      alert('Failed to generate report');
+      showError('Failed to generate report');
     } finally {
       setLoading(false);
     }
@@ -713,15 +715,41 @@ const Reports = () => {
       
       const transfersRes = await transfersAPI.get(params);
       if (transfersRes.data.success) {
-        for (const transfer of transfersRes.data.transfers || []) {
+        // Sort transfers by date (most recent first)
+        const sortedTransfers = [...(transfersRes.data.transfers || [])].sort((a, b) => {
+          const dateA = a.date ? (typeof a.date === 'string' ? a.date : a.date.toISOString().split('T')[0]) : '';
+          const dateB = b.date ? (typeof b.date === 'string' ? b.date : b.date.toISOString().split('T')[0]) : '';
+          return dateB.localeCompare(dateA); // Descending order (newest first)
+        });
+
+        for (const transfer of sortedTransfers) {
           if (itemTypeFilter && transfer.itemType !== itemTypeFilter) continue;
+          
+          // Format transfer date - use the date from transfer record (selected date from date picker)
+          let transferDate = '';
+          if (transfer.date) {
+            if (typeof transfer.date === 'string') {
+              // If it's already a string, use it directly (should be in YYYY-MM-DD format)
+              transferDate = transfer.date.split('T')[0]; // Remove time if present
+            } else if (transfer.date instanceof Date) {
+              // If it's a Date object, convert to string
+              transferDate = transfer.date.toISOString().split('T')[0];
+            } else {
+              // If it's a date-like object, try to convert
+              try {
+                const dateObj = new Date(transfer.date);
+                transferDate = dateObj.toISOString().split('T')[0];
+              } catch (e) {
+                transferDate = String(transfer.date).split('T')[0];
+              }
+            }
+          }
           
           // Ensure items is an array
           const transferItems = Array.isArray(transfer.items) ? transfer.items : [];
           
           if (transferItems.length === 0) {
             // If no items, still show the transfer but with a message
-            const transferDate = transfer.date ? (typeof transfer.date === 'string' ? transfer.date : transfer.date.toISOString().split('T')[0]) : '';
             body.push([
               transferDate,
               transfer.senderBranch || '-',
@@ -733,8 +761,6 @@ const Reports = () => {
             ]);
             continue;
           }
-          
-          const transferDate = transfer.date ? (typeof transfer.date === 'string' ? transfer.date : transfer.date.toISOString().split('T')[0]) : '';
           
           // Build item names list with quantities
           const itemNamesList = transferItems.map(item => {
@@ -788,8 +814,9 @@ const Reports = () => {
             ? Number(totalQty).toFixed(3) 
             : Math.trunc(totalQty);
           
+          // Add transfer to report with the date from transfer record (selected date from date picker)
           body.push([
-            transferDate,
+            transferDate || '-',
             transfer.senderBranch || '-',
             transfer.receiverBranch || '-',
             transfer.itemType || '-',
@@ -801,6 +828,7 @@ const Reports = () => {
       }
     } catch (error) {
       console.error('Error fetching transfers:', error);
+      showError('Failed to load transfer data. Please try again.');
       body.push({ cells: ['Error loading transfer data.'], colSpan: 7 });
     }
 
@@ -835,7 +863,7 @@ const Reports = () => {
 
   const exportPDF = () => {
     if (!tableHead || tableHead.length === 0) {
-      alert('No data to export. Please generate a report first.');
+      showWarning('No data to export. Please generate a report first.');
       return;
     }
 
@@ -885,7 +913,7 @@ const Reports = () => {
       
       // Validate body data
       if (body.length === 0) {
-        alert('No data to export in PDF.');
+        showWarning('No data to export in PDF.');
         return;
       }
       
@@ -925,7 +953,7 @@ const Reports = () => {
       doc.save(fileName);
     } catch (error) {
       console.error('PDF export error:', error);
-      alert('Failed to export PDF. Please check the console for details.');
+      showError('Failed to export PDF. Please check the console for details.');
     }
   };
 

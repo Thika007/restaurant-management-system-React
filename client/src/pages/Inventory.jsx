@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { itemsAPI } from '../services/api';
+import { exportToExcel, exportToPDF } from '../utils/exportUtils';
+import { formatCurrency } from '../utils/helpers';
+import { useToast } from '../context/ToastContext';
 
 const Inventory = () => {
+  const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [items, setItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -110,7 +114,7 @@ const Inventory = () => {
   const handleAddItem = async () => {
     try {
       if (!itemType) {
-        alert('Please select an item type.');
+        showWarning('Please select an item type.');
         return;
       }
 
@@ -124,20 +128,20 @@ const Inventory = () => {
 
       if (itemType === 'Normal Item') {
         if (!itemData.name || !itemData.category || !itemData.price || itemData.price <= 0) {
-          alert('Please fill all required fields for Normal Item.');
+          showWarning('Please fill all required fields for Normal Item.');
           return;
         }
         itemData.description = formData.description.trim() || null;
       } else if (itemType === 'Grocery Item') {
         if (!itemData.name || !itemData.category || !itemData.price || itemData.price <= 0) {
-          alert('Please fill all required fields for Grocery Item.');
+          showWarning('Please fill all required fields for Grocery Item.');
           return;
         }
         itemData.soldByWeight = formData.soldByWeight;
         itemData.notifyExpiry = formData.notifyExpiry;
       } else if (itemType === 'Machine') {
         if (!itemData.name || !itemData.price || itemData.price <= 0) {
-          alert('Please fill all required fields for Machine.');
+          showWarning('Please fill all required fields for Machine.');
           return;
         }
         itemData.category = 'Machine';
@@ -146,8 +150,8 @@ const Inventory = () => {
 
       const response = await itemsAPI.create(itemData);
       if (response.data.success) {
-        alert(itemType === 'Machine' 
-          ? `Machine "${itemData.name}" created successfully!\nPrice per unit: Rs ${itemData.price.toFixed(2)}`
+        showSuccess(itemType === 'Machine' 
+          ? `Machine "${itemData.name}" created successfully! Price per unit: Rs ${itemData.price.toFixed(2)}`
           : 'Item added successfully!'
         );
         clearForm();
@@ -156,7 +160,7 @@ const Inventory = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to add item';
-      alert(message);
+      showError(message);
       console.error('Add item error:', error);
     }
   };
@@ -215,27 +219,27 @@ const Inventory = () => {
 
       if (editingItem.itemType === 'Normal Item') {
         if (!updateData.name || !updateData.category || !updateData.price || updateData.price <= 0) {
-          alert('Please fill all required fields.');
+          showWarning('Please fill all required fields.');
           return;
         }
         updateData.description = formData.description.trim() || null;
       } else if (editingItem.itemType === 'Grocery Item') {
         if (!updateData.name || !updateData.category || !updateData.price || updateData.price <= 0) {
-          alert('Please fill all required fields.');
+          showWarning('Please fill all required fields.');
           return;
         }
         updateData.soldByWeight = formData.soldByWeight;
         updateData.notifyExpiry = formData.notifyExpiry;
       } else if (editingItem.itemType === 'Machine') {
         if (!updateData.name || !updateData.price || updateData.price <= 0) {
-          alert('Please fill all required fields.');
+          showWarning('Please fill all required fields.');
           return;
         }
       }
 
       const response = await itemsAPI.update(editingItem.code, updateData);
       if (response.data.success) {
-        alert(`${editingItem.itemType} updated successfully!`);
+        showSuccess(`${editingItem.itemType} updated successfully!`);
         clearForm();
         setShowEditModal(false);
         setShowEditGroceryModal(false);
@@ -245,23 +249,23 @@ const Inventory = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update item';
-      alert(message);
+      showError(message);
       console.error('Update item error:', error);
     }
   };
 
   const handleDelete = async (code) => {
-    if (!confirm('Are you sure you want to delete this item?')) return;
+    if (!window.confirm('Are you sure you want to delete this item?')) return;
 
     try {
       const response = await itemsAPI.delete(code);
       if (response.data.success) {
-        alert('Item deleted successfully!');
+        showSuccess('Item deleted successfully!');
         loadItems();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to delete item';
-      alert(message);
+      showError(message);
       console.error('Delete item error:', error);
     }
   };
@@ -278,6 +282,43 @@ const Inventory = () => {
       notifyExpiry: false
     });
     setEditingItem(null);
+  };
+
+  // Prepare export data
+  const getExportRows = () => {
+    return filteredItems.map(item => [
+      item.name,
+      item.itemType,
+      item.category,
+      item.subcategory || '-',
+      formatCurrency(item.price)
+    ]);
+  };
+
+  // Handle export
+  const handleExport = (format) => {
+    if (filteredItems.length === 0) {
+      showWarning('No items available to export.');
+      return;
+    }
+
+    const headers = ['Item Name', 'Type', 'Category', 'Subcategory', 'Price (Rs.)'];
+    const rows = getExportRows();
+    
+    // Build filename with filters
+    const filenameParts = ['Inventory_Items'];
+    if (filterType) filenameParts.push(filterType.replace(/\s+/g, '_'));
+    if (filterCategory) filenameParts.push(filterCategory.replace(/\s+/g, '_'));
+    if (searchTerm) filenameParts.push('Search_' + searchTerm.replace(/\s+/g, '_'));
+    const filename = filenameParts.join('_');
+
+    const title = `Inventory Items - Master Creation${filterType ? ` (${filterType})` : ''}${filterCategory ? ` - ${filterCategory}` : ''}${searchTerm ? ` - Search: ${searchTerm}` : ''}`;
+
+    if (format === 'excel') {
+      exportToExcel({ filename, sheetName: 'Inventory Items', headers, rows });
+    } else {
+      exportToPDF({ filename, title, headers, rows, orientation: 'landscape' });
+    }
   };
 
   const showNormalFields = itemType === 'Normal Item';
@@ -355,7 +396,29 @@ const Inventory = () => {
 
       {/* Items Table */}
       <div className="card">
-        <div className="card-header">Inventory Items</div>
+        <div className="card-header">
+          <div className="d-flex justify-content-between align-items-center">
+            <span>Inventory Items</span>
+            {filteredItems.length > 0 && (
+              <div className="d-flex gap-2">
+                <button
+                  className="btn btn-success btn-sm"
+                  onClick={() => handleExport('excel')}
+                  title="Export to Excel"
+                >
+                  <i className="fas fa-file-excel"></i> Export Excel
+                </button>
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => handleExport('pdf')}
+                  title="Export to PDF"
+                >
+                  <i className="fas fa-file-pdf"></i> Export PDF
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
         <div className="card-body">
           <table className="table table-hover">
             <thead>
