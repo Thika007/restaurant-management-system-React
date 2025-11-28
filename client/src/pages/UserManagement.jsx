@@ -9,6 +9,10 @@ const UserManagement = () => {
   const [branches, setBranches] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [userToDelete, setUserToDelete] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
 
   // Form states for Add User
@@ -213,7 +217,9 @@ const UserManagement = () => {
       });
 
       if (response.data.success) {
-        showSuccess('User added successfully!');
+        const message = `User "${addFormData.fullName}" (${addFormData.username}) created successfully!`;
+        setSuccessMessage(message);
+        setShowSuccessModal(true);
         closeAddModal();
         loadInitialData();
       }
@@ -266,7 +272,9 @@ const UserManagement = () => {
       const response = await usersAPI.update(editingUser.id, updateData);
 
       if (response.data.success) {
-        showSuccess('User updated successfully!');
+        const message = `User "${editFormData.fullName}" (${editFormData.username}) updated successfully!`;
+        setSuccessMessage(message);
+        setShowSuccessModal(true);
         closeEditModal();
         loadInitialData();
       }
@@ -277,22 +285,42 @@ const UserManagement = () => {
     }
   };
 
-  const handleDeleteUser = async (userId) => {
-    if (!confirm('Are you sure you want to delete this user?')) {
-      return;
+  const handleDeleteClick = (userId) => {
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      setUserToDelete({ id: userId, username: user.username || 'Unknown', fullName: user.fullName || 'Unknown' });
+      setShowDeleteModal(true);
     }
+  };
+
+  const closeDeleteModal = () => {
+    setShowDeleteModal(false);
+    setUserToDelete(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!userToDelete) return;
 
     try {
-      const response = await usersAPI.delete(userId);
+      const response = await usersAPI.delete(userToDelete.id);
       if (response.data.success) {
-        showSuccess('User deleted successfully!');
+        const message = `User "${userToDelete.fullName}" (${userToDelete.username}) deleted successfully!`;
+        setSuccessMessage(message);
+        setShowSuccessModal(true);
+        closeDeleteModal();
         loadInitialData();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to delete user';
       showError(message);
       console.error('Delete user error:', error);
+      closeDeleteModal();
     }
+  };
+
+  const closeSuccessModal = () => {
+    setShowSuccessModal(false);
+    setSuccessMessage('');
   };
 
   if (loading) {
@@ -361,7 +389,7 @@ const UserManagement = () => {
                   </button>
                   <button
                     className="btn btn-sm btn-danger"
-                    onClick={() => handleDeleteUser(user.id)}
+                    onClick={() => handleDeleteClick(user.id)}
                   >
                     <i className="fas fa-trash"></i>
                   </button>
@@ -692,6 +720,83 @@ const UserManagement = () => {
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && userToDelete && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-danger text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-exclamation-triangle me-2"></i>
+                  Confirm Deletion
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeDeleteModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0">
+                  Are you sure you want to delete user <strong>"{userToDelete.fullName}"</strong> ({userToDelete.username})? This action cannot be undone.
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeDeleteModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={confirmDelete}
+                >
+                  <i className="fas fa-trash me-2"></i>Delete User
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-success text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-check-circle me-2"></i>
+                  Success
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeSuccessModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0" style={{ fontSize: '1.1rem' }}>
+                  {successMessage}
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  onClick={closeSuccessModal}
+                >
+                  <i className="fas fa-check me-2"></i>OK
+                </button>
               </div>
             </div>
           </div>

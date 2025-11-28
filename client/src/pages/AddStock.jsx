@@ -31,6 +31,8 @@ const AddStock = () => {
   // Modal states
   const [showGroceryModal, setShowGroceryModal] = useState(false);
   const [showMachineModal, setShowMachineModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [selectedGroceryItem, setSelectedGroceryItem] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [groceryFormData, setGroceryFormData] = useState({ quantity: '', expiryDate: '', addedDate: stockDate });
@@ -192,7 +194,10 @@ const AddStock = () => {
       });
 
       if (response.data.success) {
-        showSuccess('Stocks updated successfully!');
+        const itemCount = itemsToUpdate.length;
+        const message = `Normal items stock updated successfully! ${itemCount} item(s) added to ${selectedBranch} for ${stockDate}.`;
+        setSuccessMessage(message);
+        setShowSuccessModal(true);
         // Reset quantities
         const resetQuantities = {};
         Object.keys(stockQuantities).forEach(code => {
@@ -235,7 +240,12 @@ const AddStock = () => {
       });
 
       if (response.data.success) {
-        showSuccess('Grocery stock added successfully!');
+        const displayQuantity = selectedGroceryItem.soldByWeight 
+          ? Number(quantity).toFixed(3)
+          : Math.trunc(quantity);
+        const message = `Grocery stock added successfully! "${selectedGroceryItem.name}" - Quantity: ${displayQuantity}, Added to ${selectedBranch}.`;
+        setSuccessMessage(message);
+        setShowSuccessModal(true);
         setShowGroceryModal(false);
         setSelectedGroceryItem(null);
         setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
@@ -322,6 +332,29 @@ const AddStock = () => {
     }
 
     try {
+      // Check if there's a completed batch that was ended on the selected date
+      const completedRes = await machinesAPI.getBatches({
+        branch: selectedBranch,
+        machineCode: selectedMachine.code,
+        status: 'completed'
+      });
+
+      if (completedRes.data.success && completedRes.data.batches.length > 0) {
+        // Check if any completed batch was ended on the selected date
+        const selectedDate = new Date(machineFormData.date);
+        const endedOnSelectedDate = completedRes.data.batches.find(batch => {
+          if (!batch.endTime) return false;
+          const endDate = new Date(batch.endTime);
+          // Compare dates (ignoring time)
+          return endDate.toISOString().split('T')[0] === selectedDate.toISOString().split('T')[0];
+        });
+
+        if (endedOnSelectedDate) {
+          showError(`Cannot start "${selectedMachine.name}" because it was already ended on ${machineFormData.date}. Please select a different date.`);
+          return;
+        }
+      }
+
       // Check if active batch exists for this specific machine and branch
       const checkRes = await machinesAPI.getBatches({
         branch: selectedBranch,
@@ -347,7 +380,9 @@ const AddStock = () => {
           });
 
           if (updateRes.data.success) {
-            showSuccess('Start value updated successfully!');
+            const message = `Machine batch updated successfully! "${selectedMachine.name}" - Start value: ${startValue}, Branch: ${selectedBranch}.`;
+            setSuccessMessage(message);
+            setShowSuccessModal(true);
             setShowMachineModal(false);
             setSelectedMachine(null);
             setMachineFormData({ startValue: '', date: '' });
@@ -366,7 +401,9 @@ const AddStock = () => {
         });
 
         if (response.data.success) {
-          showSuccess('Machine batch started successfully!');
+          const message = `Machine batch started successfully! "${selectedMachine.name}" - Start value: ${startValue}, Branch: ${selectedBranch}.`;
+          setSuccessMessage(message);
+          setShowSuccessModal(true);
           setShowMachineModal(false);
           setSelectedMachine(null);
           setMachineFormData({ startValue: '', date: '' });
@@ -381,6 +418,11 @@ const AddStock = () => {
   };
 
   // Get available stock for grocery item - Total Stock = sum of remaining from all batches
+  const closeSuccessModal = () => {
+    setShowSuccessModal(false);
+    setSuccessMessage('');
+  };
+
   const getGroceryAvailableStock = (itemCode) => {
     if (!selectedBranch) return 0;
     const itemStocks = groceryStocks.filter(s => s.itemCode === itemCode && s.branch === selectedBranch);
@@ -1022,6 +1064,41 @@ const AddStock = () => {
                     Start Machine
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-success text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-check-circle me-2"></i>
+                  Success
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeSuccessModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0" style={{ fontSize: '1.1rem' }}>
+                  {successMessage}
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  onClick={closeSuccessModal}
+                >
+                  <i className="fas fa-check me-2"></i>OK
+                </button>
               </div>
             </div>
           </div>

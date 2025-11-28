@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { branchesAPI, stocksAPI, cashAPI, groceryAPI, machinesAPI, itemsAPI, transfersAPI, usersAPI, activitiesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { getCurrentDate, formatCurrency, getDateRange } from '../utils/helpers';
@@ -50,6 +50,96 @@ const Dashboard = () => {
     return branches.filter(b => user.assignedBranches.includes(b.name));
   };
 
+  // Load recent activities function - must be defined before useEffect hooks
+  const loadRecentActivities = useCallback(async () => {
+    try {
+      console.log('Loading recent activities...'); // Debug log
+      
+      // Calculate date range for recent activities (last 30 days to get more records)
+      const recentDate = new Date();
+      recentDate.setDate(recentDate.getDate() - 30);
+      const recentDateStr = recentDate.toISOString().split('T')[0];
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      // Build query parameters - expand to 30 days or remove date filter to see all
+      const params = {
+        // Temporarily remove date filtering to test - comment out dateFrom/dateTo
+        // dateFrom: recentDateStr,
+        // dateTo: todayStr,
+        limit: 100
+      };
+      
+      console.log('Date range calculated:', { recentDateStr, todayStr }); // Debug log
+
+      // Filter by branch if selected
+      if (branch && branch !== 'All Branches') {
+        params.branch = branch;
+      }
+
+      console.log('Fetching activities with params:', params); // Debug log
+
+      // Fetch activities from the new API
+      const activitiesRes = await activitiesAPI.getRecentActivities(params);
+      
+      console.log('Activities API response:', activitiesRes.data); // Debug log
+      
+      if (activitiesRes.data && activitiesRes.data.success) {
+        const activitiesArray = activitiesRes.data.activities || [];
+        console.log(`Received ${activitiesArray.length} activities from API`);
+        
+        const activities = activitiesArray.map((activity, idx) => {
+          try {
+            // Handle timestamp - backend sends ISO string
+            let timestampDate;
+            if (activity.timestamp) {
+              timestampDate = typeof activity.timestamp === 'string' 
+                ? new Date(activity.timestamp) 
+                : new Date(activity.timestamp);
+            } else if (activity.date) {
+              timestampDate = typeof activity.date === 'string'
+                ? new Date(activity.date)
+                : new Date(activity.date);
+            } else {
+              timestampDate = new Date();
+            }
+            
+            // Validate date
+            if (isNaN(timestampDate.getTime())) {
+              console.warn(`Invalid date for activity ${idx}:`, activity);
+              timestampDate = new Date();
+            }
+            
+            return {
+              id: activity.id || `activity-${idx}`,
+              type: activity.type || 'unknown',
+              message: activity.message || '',
+              branch: activity.branch || null,
+              date: timestampDate,
+              timestamp: timestampDate.getTime()
+            };
+          } catch (parseError) {
+            console.error(`Error parsing activity ${idx}:`, parseError, activity);
+            return null;
+          }
+        }).filter(activity => activity !== null);
+        
+        // Sort by timestamp descending (most recent first)
+        activities.sort((a, b) => b.timestamp - a.timestamp);
+        
+        console.log(`Successfully parsed ${activities.length} activities`); // Debug log
+        setRecentActivities(activities);
+        setCurrentPage(1); // Reset to first page when activities reload
+      } else {
+        console.warn('No activities returned. Response:', activitiesRes.data);
+        setRecentActivities([]);
+      }
+    } catch (error) {
+      console.error('Error loading recent activities:', error);
+      console.error('Error details:', error.response?.data || error.message);
+      setRecentActivities([]);
+    }
+  }, [branch]);
+
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -70,16 +160,18 @@ const Dashboard = () => {
     }
   }, [branch, dateFrom, dateTo, branches, items]);
 
-  // Auto-refresh recent activities every 30 seconds for real-time updates
+  // Load recent activities independently - doesn't need branches/items to be loaded
   useEffect(() => {
-    if (branches.length > 0 && items.length > 0) {
-      const interval = setInterval(() => {
-        loadRecentActivities();
-      }, 30000); // Refresh every 30 seconds
+    // Load immediately on mount
+    loadRecentActivities();
+    
+    // Auto-refresh recent activities every 30 seconds for real-time updates
+    const interval = setInterval(() => {
+      loadRecentActivities();
+    }, 30000); // Refresh every 30 seconds
 
-      return () => clearInterval(interval);
-    }
-  }, [branch, branches, items]);
+    return () => clearInterval(interval);
+  }, [branch, loadRecentActivities]);
 
   const loadInitialData = async () => {
     try {
@@ -412,49 +504,6 @@ const Dashboard = () => {
     });
   };
 
-  const loadRecentActivities = async () => {
-    try {
-      // Calculate date range for recent activities (last 7 days by default)
-      const recentDate = new Date();
-      recentDate.setDate(recentDate.getDate() - 7);
-      const recentDateStr = recentDate.toISOString().split('T')[0];
-      const todayStr = new Date().toISOString().split('T')[0];
-
-      // Build query parameters
-      const params = {
-        dateFrom: recentDateStr,
-        dateTo: todayStr,
-        limit: 100
-      };
-
-      // Filter by branch if selected
-        if (branch && branch !== 'All Branches') {
-          params.branch = branch;
-      }
-
-      // Fetch activities from the new API
-      const activitiesRes = await activitiesAPI.getRecentActivities(params);
-      
-      if (activitiesRes.data.success) {
-        const activities = activitiesRes.data.activities.map(activity => ({
-          type: activity.type,
-          message: activity.message,
-          branch: activity.branch,
-          date: new Date(activity.timestamp),
-          timestamp: new Date(activity.timestamp).getTime()
-        }));
-        
-        setRecentActivities(activities);
-        setCurrentPage(1); // Reset to first page when activities reload
-                    } else {
-        setRecentActivities([]);
-      }
-    } catch (error) {
-      console.error('Error loading recent activities:', error);
-      setRecentActivities([]);
-    }
-  };
-
   const availableBranches = getAvailableBranches();
 
   const formatActivityType = (type) => {
@@ -693,14 +742,19 @@ const Dashboard = () => {
                         <td colSpan="4" className="text-center text-muted">No recent activity</td>
                       </tr>
                     ) : (
-                      paginatedActivities.map((activity, index) => (
-                        <tr key={`${activity.timestamp}-${index}`}>
-                          <td>{new Date(activity.date).toLocaleString()}</td>
-                          <td>{formatActivityType(activity.type)}</td>
-                          <td>{activity.message}</td>
-                          <td>{activity.branch || '-'}</td>
-                        </tr>
-                      ))
+                      paginatedActivities.map((activity, index) => {
+                        const dateStr = activity.date instanceof Date 
+                          ? activity.date.toLocaleString()
+                          : (activity.date ? new Date(activity.date).toLocaleString() : 'N/A');
+                        return (
+                          <tr key={`${activity.id || activity.timestamp || index}-${index}`}>
+                            <td>{dateStr}</td>
+                            <td>{formatActivityType(activity.type)}</td>
+                            <td>{activity.message || ''}</td>
+                            <td>{activity.branch || '-'}</td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>

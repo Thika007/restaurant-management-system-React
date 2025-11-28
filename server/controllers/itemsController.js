@@ -1,4 +1,5 @@
 const { getConnection, sql } = require('../config/db');
+const { createActivity } = require('./activitiesController');
 
 const getAllItems = async (req, res) => {
   try {
@@ -85,6 +86,15 @@ const createItem = async (req, res) => {
         VALUES (@code, @itemType, @name, @category, @subcategory, @price, @description, @soldByWeight, @notifyExpiry)
       `);
 
+    // Log activity
+    const itemTypeLabel = itemType === 'Normal Item' ? 'Normal Item' : itemType === 'Grocery Item' ? 'Grocery Item' : 'Machine';
+    await createActivity(
+      'item_created',
+      `${itemTypeLabel} "${name}" added to inventory`,
+      null, // No branch for item creation
+      new Date()
+    );
+
     res.json({ success: true, message: 'Item created successfully', item: { code, name } });
   } catch (error) {
     console.error('Create item error:', error);
@@ -154,6 +164,24 @@ const updateItem = async (req, res) => {
         WHERE code = @code
       `);
 
+    // Get item name for activity logging
+    const itemResult = await pool.request()
+      .input('code', sql.NVarChar, code)
+      .query('SELECT name, itemType FROM Items WHERE code = @code');
+    
+    if (itemResult.recordset.length > 0) {
+      const itemName = itemResult.recordset[0].name;
+      const itemTypeLabel = itemResult.recordset[0].itemType === 'Normal Item' ? 'Normal Item' : itemResult.recordset[0].itemType === 'Grocery Item' ? 'Grocery Item' : 'Machine';
+      
+      // Log activity
+      await createActivity(
+        'item_updated',
+        `${itemTypeLabel} "${itemName}" updated`,
+        null, // No branch for item update
+        new Date()
+      );
+    }
+
     res.json({ success: true, message: 'Item updated successfully' });
   } catch (error) {
     console.error('Update item error:', error);
@@ -178,15 +206,16 @@ const deleteItem = async (req, res) => {
     const { code } = req.params;
     const pool = await getConnection();
 
-    // Determine item type first (machine vs others)
+    // Determine item type first (machine vs others) and get item name for activity logging
     const itemTypeResult = await pool.request()
       .input('code', sql.NVarChar, code)
-      .query('SELECT itemType FROM Items WHERE code = @code');
+      .query('SELECT itemType, name FROM Items WHERE code = @code');
 
     if (itemTypeResult.recordset.length === 0) {
       return res.status(404).json({ success: false, message: 'Item not found' });
     }
     const itemType = itemTypeResult.recordset[0].itemType;
+    const itemName = itemTypeResult.recordset[0].name;
 
     // Check if item has stock (basic check) - handle NULLs safely
     let stockCheck = { recordset: [] };
@@ -284,6 +313,15 @@ const deleteItem = async (req, res) => {
       if (rowsAffected === 0) {
         return res.status(404).json({ success: false, message: 'Item not found or already deleted' });
       }
+
+      // Log activity for item deletion
+      const itemTypeLabel = itemType === 'Normal Item' ? 'Normal Item' : itemType === 'Grocery Item' ? 'Grocery Item' : 'Machine';
+      await createActivity(
+        'item_deleted',
+        `${itemTypeLabel} "${itemName}" deleted from inventory`,
+        null, // No branch for item deletion
+        new Date()
+      );
 
       res.json({ success: true, message: 'Item deleted successfully' });
     } catch (dbError) {

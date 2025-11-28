@@ -689,7 +689,7 @@ const AddReturn = () => {
                 ))}
               </select>
             </div>
-            {selectedType === 'Normal Item' && (
+            {(selectedType === 'Normal Item' || selectedType === 'Machine') && (
               <div className="col-md-3">
                 <input
                   type="date"

@@ -26,46 +26,41 @@ const Layout = () => {
   const notificationPanelRef = useRef(null);
   const [notifPollingEnabled, setNotifPollingEnabled] = useState(false);
   const notifFailureCountRef = useRef(0);
+  const [showClearDataModal, setShowClearDataModal] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const handleClearData = async () => {
+  const handleClearDataClick = () => {
     if (!user || user.role !== 'admin') {
       showWarning('Only admins can clear transaction data.');
       return;
     }
+    setShowClearDataModal(true);
+  };
 
-    const confirmMessage = 'Are you sure you want to clear ALL transaction data?\n\n' +
-      'This will clear:\n' +
-      '• All sales data (normal items, grocery, machines)\n' +
-      '• All stock additions and returns\n' +
-      '• All transfers\n' +
-      '• All cash entries\n' +
-      '• All expiry tracking data\n\n' +
-      'After clearing, Dashboard, Reports, and Expire Tracking pages will show NO data.\n\n' +
-      'This will NOT delete:\n' +
-      '• Users\n' +
-      '• Branches\n' +
-      '• Items (master data)\n\n' +
-      'This action cannot be undone.';
+  const closeClearDataModal = () => {
+    setShowClearDataModal(false);
+  };
 
-    if (window.confirm(confirmMessage)) {
-      try {
-        const response = await systemAPI.clearTransactionData();
-        if (response.data.success) {
-          showSuccess('All transaction data cleared successfully! Dashboard, Reports, and Expire Tracking will now show no data. Users, branches, and items are preserved.');
-          // Reload the page to refresh data
-          window.location.reload();
-        } else {
-          showError('Failed to clear data: ' + (response.data.message || 'Unknown error'));
-        }
-      } catch (error) {
-        console.error('Error clearing data:', error);
-        showError('Error clearing data: ' + (error.response?.data?.message || error.message || 'Unknown error'));
+  const confirmClearData = async () => {
+    try {
+      const response = await systemAPI.clearTransactionData();
+      if (response.data.success) {
+        showSuccess('All transaction data cleared successfully! Dashboard, Reports, and Expire Tracking will now show no data. Users, branches, and items are preserved.');
+        closeClearDataModal();
+        // Reload the page to refresh data
+        window.location.reload();
+      } else {
+        showError('Failed to clear data: ' + (response.data.message || 'Unknown error'));
+        closeClearDataModal();
       }
+    } catch (error) {
+      console.error('Error clearing data:', error);
+      showError('Error clearing data: ' + (error.response?.data?.message || error.message || 'Unknown error'));
+      closeClearDataModal();
     }
   };
 
@@ -337,7 +332,7 @@ const Layout = () => {
               <ul className="dropdown-menu">
                 <li><a className="dropdown-item" href="#"><i className="fas fa-cog me-2"></i>Settings</a></li>
                 {user?.role === 'admin' && (
-                  <li><a className="dropdown-item" href="#" onClick={(e) => { e.preventDefault(); handleClearData(); }}><i className="fas fa-trash-alt me-2"></i>Clear Data</a></li>
+                  <li><a className="dropdown-item" href="#" onClick={(e) => { e.preventDefault(); handleClearDataClick(); }}><i className="fas fa-trash-alt me-2"></i>Clear Data</a></li>
                 )}
                 <li><hr className="dropdown-divider" /></li>
                 <li><a className="dropdown-item" href="#" onClick={(e) => { e.preventDefault(); handleLogout(); }}><i className="fas fa-sign-out-alt me-2"></i>Logout</a></li>
@@ -533,6 +528,72 @@ const Layout = () => {
           </Routes>
         </main>
       </div>
+
+      {/* Clear Data Confirmation Modal */}
+      {showClearDataModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header bg-danger text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-exclamation-triangle me-2"></i>
+                  Confirm Clear All Data
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeClearDataModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="alert alert-warning mb-3">
+                  <strong>Warning:</strong> This action cannot be undone!
+                </div>
+                <p className="mb-3">
+                  Are you sure you want to clear <strong>ALL transaction data</strong>?
+                </p>
+                <div className="mb-3">
+                  <strong>This will clear:</strong>
+                  <ul className="mb-0">
+                    <li>All sales data (normal items, grocery, machines)</li>
+                    <li>All stock additions and returns</li>
+                    <li>All transfers</li>
+                    <li>All cash entries</li>
+                    <li>All expiry tracking data</li>
+                  </ul>
+                  <p className="mt-2 mb-0 text-muted small">
+                    After clearing, Dashboard, Reports, and Expire Tracking pages will show NO data.
+                  </p>
+                </div>
+                <div className="mb-0">
+                  <strong>This will NOT delete:</strong>
+                  <ul className="mb-0">
+                    <li>Users</li>
+                    <li>Branches</li>
+                    <li>Items (master data)</li>
+                  </ul>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeClearDataModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={confirmClearData}
+                >
+                  <i className="fas fa-trash-alt me-2"></i>Clear All Data
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

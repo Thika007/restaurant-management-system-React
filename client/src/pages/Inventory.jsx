@@ -21,6 +21,10 @@ const Inventory = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditGroceryModal, setShowEditGroceryModal] = useState(false);
   const [showEditMachineModal, setShowEditMachineModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [itemToDelete, setItemToDelete] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   
   // Form states
@@ -150,10 +154,11 @@ const Inventory = () => {
 
       const response = await itemsAPI.create(itemData);
       if (response.data.success) {
-        showSuccess(itemType === 'Machine' 
+        const message = itemType === 'Machine' 
           ? `Machine "${itemData.name}" created successfully! Price per unit: Rs ${itemData.price.toFixed(2)}`
-          : 'Item added successfully!'
-        );
+          : `Item "${itemData.name}" created successfully!`;
+        setSuccessMessage(message);
+        setShowSuccessModal(true);
         clearForm();
         setShowAddModal(false);
         loadItems();
@@ -239,7 +244,8 @@ const Inventory = () => {
 
       const response = await itemsAPI.update(editingItem.code, updateData);
       if (response.data.success) {
-        showSuccess(`${editingItem.itemType} updated successfully!`);
+        setSuccessMessage(`${editingItem.itemType} "${updateData.name}" updated successfully!`);
+        setShowSuccessModal(true);
         clearForm();
         setShowEditModal(false);
         setShowEditGroceryModal(false);
@@ -254,19 +260,37 @@ const Inventory = () => {
     }
   };
 
-  const handleDelete = async (code) => {
-    if (!window.confirm('Are you sure you want to delete this item?')) return;
+  const handleDeleteClick = (item) => {
+    setItemToDelete(item);
+    setShowDeleteModal(true);
+  };
+
+  const closeDeleteModal = () => {
+    setShowDeleteModal(false);
+    setItemToDelete(null);
+  };
+
+  const closeSuccessModal = () => {
+    setShowSuccessModal(false);
+    setSuccessMessage('');
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await itemsAPI.delete(code);
+      const response = await itemsAPI.delete(itemToDelete.code);
       if (response.data.success) {
-        showSuccess('Item deleted successfully!');
+        setSuccessMessage(`Item "${itemToDelete.name}" deleted successfully!`);
+        setShowSuccessModal(true);
+        closeDeleteModal();
         loadItems();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to delete item';
       showError(message);
       console.error('Delete item error:', error);
+      closeDeleteModal();
     }
   };
 
@@ -453,7 +477,7 @@ const Inventory = () => {
                       </button>
                       <button
                         className="btn btn-sm btn-danger"
-                        onClick={() => handleDelete(item.code)}
+                        onClick={() => handleDeleteClick(item)}
                       >
                         <i className="fas fa-trash"></i> Delete
                       </button>
@@ -988,6 +1012,83 @@ const Inventory = () => {
                   onClick={handleUpdateItem}
                 >
                   Update
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && itemToDelete && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-danger text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-exclamation-triangle me-2"></i>
+                  Confirm Deletion
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeDeleteModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0">
+                  Are you sure you want to delete <strong>"{itemToDelete.name}"</strong> ({itemToDelete.itemType})? This action cannot be undone.
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeDeleteModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={confirmDelete}
+                >
+                  <i className="fas fa-trash me-2"></i>Delete Item
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-success text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-check-circle me-2"></i>
+                  Success
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeSuccessModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0" style={{ fontSize: '1.1rem' }}>
+                  {successMessage}
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  onClick={closeSuccessModal}
+                >
+                  <i className="fas fa-check me-2"></i>OK
                 </button>
               </div>
             </div>

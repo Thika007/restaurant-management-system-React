@@ -3,9 +3,14 @@ import { useToast } from '../context/ToastContext';
 import { branchesAPI } from '../services/api';
 
 const BranchManagement = () => {
+  const { showSuccess, showError, showWarning } = useToast();
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [branchToDelete, setBranchToDelete] = useState(null);
   const [editingBranch, setEditingBranch] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -83,7 +88,8 @@ const BranchManagement = () => {
         // Update existing branch
         const response = await branchesAPI.update(editingBranch.name, formData);
         if (response.data.success) {
-          showSuccess('Branch updated successfully!');
+          setSuccessMessage('Branch updated successfully!');
+          setShowSuccessModal(true);
           closeModal();
           loadBranches();
         }
@@ -91,7 +97,8 @@ const BranchManagement = () => {
         // Create new branch
         const response = await branchesAPI.create(formData);
         if (response.data.success) {
-          showSuccess('Branch added successfully!');
+          setSuccessMessage('Branch created successfully!');
+          setShowSuccessModal(true);
           closeModal();
           loadBranches();
         }
@@ -103,21 +110,36 @@ const BranchManagement = () => {
     }
   };
 
-  const handleDelete = async (branchName) => {
-    if (!confirm(`Are you sure you want to delete "${branchName}"? This action cannot be undone.`)) {
-      return;
-    }
+  const handleDeleteClick = (branchName) => {
+    setBranchToDelete(branchName);
+    setShowDeleteModal(true);
+  };
+
+  const closeDeleteModal = () => {
+    setShowDeleteModal(false);
+    setBranchToDelete(null);
+  };
+
+  const closeSuccessModal = () => {
+    setShowSuccessModal(false);
+    setSuccessMessage('');
+  };
+
+  const confirmDelete = async () => {
+    if (!branchToDelete) return;
 
     try {
-      const response = await branchesAPI.delete(branchName);
+      const response = await branchesAPI.delete(branchToDelete);
       if (response.data.success) {
         showSuccess('Branch deleted successfully!');
+        closeDeleteModal();
         loadBranches();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to delete branch';
       showError(message);
       console.error('Delete branch error:', error);
+      closeDeleteModal();
     }
   };
 
@@ -169,7 +191,7 @@ const BranchManagement = () => {
                   </button>
                   <button
                     className="btn btn-sm btn-outline-danger float-end"
-                    onClick={() => handleDelete(branch.name)}
+                    onClick={() => handleDeleteClick(branch.name)}
                   >
                     <i className="fas fa-trash me-1"></i>Delete
                   </button>
@@ -273,6 +295,83 @@ const BranchManagement = () => {
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-danger text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-exclamation-triangle me-2"></i>
+                  Confirm Deletion
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeDeleteModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0">
+                  Are you sure you want to delete <strong>"{branchToDelete}"</strong>? This action cannot be undone.
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeDeleteModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={confirmDelete}
+                >
+                  <i className="fas fa-trash me-2"></i>Delete Branch
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-success text-white">
+                <h5 className="modal-title">
+                  <i className="fas fa-check-circle me-2"></i>
+                  Success
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={closeSuccessModal}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-0" style={{ fontSize: '1.1rem' }}>
+                  {successMessage}
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  onClick={closeSuccessModal}
+                >
+                  <i className="fas fa-check me-2"></i>OK
+                </button>
               </div>
             </div>
           </div>
