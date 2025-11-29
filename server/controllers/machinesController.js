@@ -43,6 +43,18 @@ const startBatch = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Required fields missing' });
     }
 
+    // Check if date is in the future
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const selectedDate = new Date(date + 'T00:00:00');
+    
+    if (selectedDate > today) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `⚠️ ERROR: Cannot start a machine batch for a future date!\n\nSelected date: ${date}\nToday's date: ${today.toISOString().split('T')[0]}\n\nPlease select today's date or a past date only.` 
+      });
+    }
+
     const pool = await getConnection();
 
     // Check for existing active batch
@@ -54,6 +66,24 @@ const startBatch = async (req, res) => {
 
     if (existingCheck.recordset.length > 0) {
       return res.status(400).json({ success: false, message: 'Active batch already exists for this machine and branch' });
+    }
+
+    // Check for completed batch for the same date and branch (works for past, today, and future dates)
+    const completedCheck = await pool.request()
+      .input('machineCode', sql.NVarChar, machineCode)
+      .input('branch', sql.NVarChar, branch)
+      .input('date', sql.Date, date)
+      .input('status', sql.NVarChar, 'completed')
+      .query('SELECT id, endTime, date FROM MachineBatches WHERE machineCode = @machineCode AND branch = @branch AND date = @date AND status = @status');
+
+    if (completedCheck.recordset.length > 0) {
+      const completedBatch = completedCheck.recordset[0];
+      const endTime = completedBatch.endTime ? new Date(completedBatch.endTime).toLocaleString() : 'previously';
+      const batchDate = completedBatch.date ? new Date(completedBatch.date).toLocaleDateString() : date;
+      return res.status(400).json({ 
+        success: false, 
+        message: `⚠️ WARNING: This machine batch has already been completed for date ${date} and branch ${branch}.\n\nThe batch was finished on ${endTime}.\n\nYou cannot start a new batch for the same date and branch. Please select a different date or branch.` 
+      });
     }
 
     const id = 'B' + Date.now();

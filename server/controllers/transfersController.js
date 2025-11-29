@@ -214,7 +214,8 @@ const createTransfer = async (req, res) => {
           itemType, 
           date,
           direction: 'sent'
-        }
+        },
+        new Date(date) // realDate: the actual transfer date
       );
 
       // Log activity on receiver branch (items received)
@@ -232,7 +233,8 @@ const createTransfer = async (req, res) => {
           itemType, 
           date,
           direction: 'received'
-        }
+        },
+        new Date(date) // realDate: the actual transfer date
       );
     }
 

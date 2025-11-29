@@ -87,7 +87,8 @@ const addGroceryStock = async (req, res) => {
       `${quantity} ${itemName} added to ${branch}`,
       branch,
       activityTimestamp,
-      { itemCode, quantity, expiryDate, date: stockDate }
+      { itemCode, quantity, expiryDate, date: stockDate },
+      new Date(stockDate) // realDate: the actual stock date
     );
 
     // Check for expiring items and create notifications
@@ -171,7 +172,8 @@ const recordGrocerySale = async (req, res) => {
       `${soldQty} ${itemName} sold at ${branch}`,
       branch,
       activityTimestamp,
-      { itemCode, itemName, soldQty, totalCash, date }
+      { itemCode, itemName, soldQty, totalCash, date },
+      new Date(date) // realDate: the actual sale date
     );
 
     res.json({ success: true, message: 'Grocery sale recorded successfully' });
@@ -288,7 +290,8 @@ const recordGroceryReturn = async (req, res) => {
       `${returnedQty} ${itemName} returned${reasonText} at ${branch}`,
       branch,
       activityTimestamp,
-      { itemCode, itemName, returnedQty, reason: reason || 'waste', date }
+      { itemCode, itemName, returnedQty, reason: reason || 'waste', date },
+      new Date(date) // realDate: the actual return date
     );
 
     res.json({ success: true, message: 'Grocery return recorded successfully' });

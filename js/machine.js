@@ -85,8 +85,13 @@ function showMachineStartModal(code, name, price) {
   document.getElementById('machineStartName').textContent = name;
   document.getElementById('machineStartPrice').textContent = `Rs ${price}`;
   document.getElementById('machineStartValue').value = '';
+  
   // Always set today's date as default - user can change it if needed
-  document.getElementById('machineStartDate').value = getCurrentDate();
+  const todayDate = getCurrentDate();
+  const dateInput = document.getElementById('machineStartDate');
+  dateInput.value = todayDate;
+  // Set max attribute to today to prevent future date selection
+  dateInput.setAttribute('max', todayDate);
   
   // Check if there's an active batch for this machine AND current branch
   const machineBatches = JSON.parse(localStorage.getItem('machineBatches')) || [];
@@ -121,7 +126,144 @@ function showMachineStartModal(code, name, price) {
       }
   }
   
+  // Set max attribute to today to prevent future date selection
+  const dateInput = document.getElementById('machineStartDate');
+  if (dateInput) {
+    const todayStr = getCurrentDate();
+    dateInput.setAttribute('max', todayStr);
+  }
+  
+  // Always check for completed batch for the selected date (works for today, past, and future dates)
+  // Check immediately after modal setup
+  setTimeout(() => {
+    if (code && branch) {
+      checkCompletedBatchForDate(code, branch);
+    }
+  }, 150);
+  
+  // Add event listener for date changes to check for completed batches and future dates
+  if (dateInput) {
+    const existingListener = dateInput._completedBatchListener;
+    if (existingListener) {
+      dateInput.removeEventListener('change', existingListener);
+      dateInput.removeEventListener('input', existingListener);
+    }
+    const newListener = () => {
+      // Update max attribute to today every time (in case date changed)
+      const todayStr = getCurrentDate();
+      dateInput.setAttribute('max', todayStr);
+      
+      const machineCode = document.getElementById('machineStartCode')?.value;
+      const branch = document.getElementById('branchSelect')?.value;
+      if (machineCode && branch) {
+        checkCompletedBatchForDate(machineCode, branch);
+      }
+    };
+    dateInput.addEventListener('change', newListener);
+    dateInput.addEventListener('input', newListener); // Also check on input for real-time feedback
+    dateInput._completedBatchListener = newListener;
+  }
+  
   bootstrap.Modal.getOrCreateInstance(document.getElementById('startMachineModal')).show();
+}
+
+// Check if there's a completed batch for the selected date and show warning
+// Also checks if the date is in the future
+function checkCompletedBatchForDate(machineCode, branch, showAlertImmediately = false) {
+  const machineBatches = JSON.parse(localStorage.getItem('machineBatches')) || [];
+  const date = document.getElementById('machineStartDate')?.value;
+  const statusElement = document.getElementById('machineStartStatus');
+  
+  if (!machineCode || !branch || !date) {
+    console.log('checkCompletedBatchForDate: Missing required params', { machineCode, branch, date });
+    return false;
+  }
+  
+  if (!statusElement) {
+    console.log('checkCompletedBatchForDate: Status element not found');
+  }
+  
+  // Check if date is in the future
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const selectedDate = new Date(date + 'T00:00:00');
+  
+  if (selectedDate > today) {
+    if (statusElement) {
+      statusElement.textContent = `⚠️ ERROR: Cannot start machine for future dates! Today is ${today.toISOString().split('T')[0]}`;
+      statusElement.className = 'text-danger fw-bold';
+    }
+    
+    if (showAlertImmediately || !statusElement || !statusElement._warningShown) {
+      if (statusElement) statusElement._warningShown = true;
+      const alertMessage = `⚠️ ERROR: Cannot start a machine batch for a future date!\n\nSelected date: ${date}\nToday's date: ${today.toISOString().split('T')[0]}\n\nPlease select today's date or a past date only.`;
+      
+      setTimeout(() => {
+        alert(alertMessage);
+        if (statusElement) statusElement._warningShown = false;
+      }, showAlertImmediately ? 0 : 300);
+    }
+    return true; // Return true to block the action
+  }
+  
+  // Normalize dates to YYYY-MM-DD format for accurate comparison (handles today, past, and future dates)
+  const normalizedDate = date ? date.split('T')[0] : date;
+  
+  console.log('Checking for completed batch:', { machineCode, branch, date: normalizedDate, totalBatches: machineBatches.length });
+  
+  const completedBatch = machineBatches.find(batch => {
+    if (batch.machineCode !== machineCode || batch.status !== 'completed' || batch.branch !== branch) {
+      return false;
+    }
+    // Normalize batch date for comparison - handle various date formats
+    let batchDate = batch.date;
+    if (batchDate) {
+      if (batchDate instanceof Date) {
+        batchDate = batchDate.toISOString().split('T')[0];
+      } else if (typeof batchDate === 'string') {
+        batchDate = batchDate.split('T')[0];
+      }
+    }
+    const matches = batchDate === normalizedDate;
+    if (matches) {
+      console.log('Found completed batch:', batch);
+    }
+    return matches;
+  });
+  
+  if (completedBatch) {
+    const endTime = completedBatch.endTime 
+      ? new Date(completedBatch.endTime).toLocaleString() 
+      : 'previously';
+    
+    if (statusElement) {
+      statusElement.textContent = `⚠️ WARNING: Batch already completed for this date! Finished on ${endTime}`;
+      statusElement.className = 'text-danger fw-bold';
+    }
+    
+    // Show alert - always show if explicitly requested, otherwise limit to avoid spam
+    if (showAlertImmediately || !statusElement || !statusElement._warningShown) {
+      if (statusElement) statusElement._warningShown = true;
+      const alertMessage = `⚠️ WARNING: This machine batch has already been completed for date ${date} and branch ${branch}.\n\nThe batch was finished on ${endTime}.\n\nYou cannot start a new batch for the same date and branch. Please select a different date or branch.`;
+      
+      setTimeout(() => {
+        alert(alertMessage);
+        if (statusElement) statusElement._warningShown = false; // Reset flag after alert
+      }, showAlertImmediately ? 0 : 300);
+    }
+    return true; // Return true to indicate completed batch found
+  } else {
+    // Reset status if no completed batch found and date is valid
+    if (statusElement) {
+      statusElement._warningShown = false;
+      const currentText = statusElement.textContent;
+      if (currentText && (currentText.includes('WARNING') || currentText.includes('⚠️') || currentText.includes('ERROR'))) {
+        statusElement.textContent = 'Ready to Start';
+        statusElement.className = 'text-info';
+      }
+    }
+    return false; // Return false to indicate no completed batch found
+  }
 }
 
 // Update machine start value
@@ -176,17 +318,41 @@ function startMachineBatch() {
   }
 
   const machineCode = document.getElementById('machineStartCode').value;
-  const startValue = parseInt(document.getElementById('machineStartValue').value) || 0;
+  const startValueInput = document.getElementById('machineStartValue');
+  const startValue = parseInt(startValueInput.value) || 0;
   const date = document.getElementById('machineStartDate').value;
   const branch = document.getElementById('branchSelect').value;
   
+  // Validate start value - show popup if empty or invalid
+  if (!startValueInput.value || startValueInput.value.trim() === '') {
+      alert('⚠️ Please enter a start value to start the machine batch.');
+      startValueInput.focus();
+      return;
+  }
+  
   if (!machineCode || isNaN(startValue) || startValue < 0) {
-      alert('Please enter a valid start value.');
+      alert('⚠️ Please enter a valid start value. The value must be a number greater than or equal to 0.');
+      startValueInput.focus();
       return;
   }
   
   if (!branch) {
-      alert('Please select a branch first.');
+      alert('⚠️ Please select a branch first.');
+      return;
+  }
+  
+  if (!date) {
+      alert('⚠️ Please select a date.');
+      return;
+  }
+  
+  // Check if date is in the future
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const selectedDate = new Date(date + 'T00:00:00');
+  
+  if (selectedDate > today) {
+      alert(`⚠️ ERROR: Cannot start a machine batch for a future date!\n\nSelected date: ${date}\nToday's date: ${today.toISOString().split('T')[0]}\n\nPlease select today's date or a past date only.`);
       return;
   }
   
@@ -200,6 +366,14 @@ function startMachineBatch() {
   if (existingBatch) {
       alert('This machine already has an active batch for this branch. Please update instead.');
       return;
+  }
+  
+  // Final check: Check if there's a completed batch for the same date and branch before starting
+  // This uses the same function to ensure consistency and always shows alert
+  // Also checks for future dates
+  const hasCompletedBatch = checkCompletedBatchForDate(machineCode, branch, true);
+  if (hasCompletedBatch) {
+      return; // Stop execution if completed batch found or future date detected
   }
   
   // Create new batch
@@ -350,6 +524,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (branchSelect) {
           branchSelect.addEventListener('change', loadMachines);
       }
+      
   }
   
   if (window.location.pathname.includes('add-return.html')) {

@@ -140,7 +140,8 @@ const updateStocks = async (req, res) => {
           `${item.quantity} ${itemName} added to ${branch}`,
           branch,
           activityTimestamp,
-          { itemCode: item.itemCode, quantity: item.quantity, date }
+          { itemCode: item.itemCode, quantity: item.quantity, date },
+          new Date(date) // realDate: the actual stock date
         );
       }
     }
@@ -207,7 +208,8 @@ const finishBatch = async (req, res) => {
         `Batch finished at ${branch}: Total Revenue Rs ${totalRevenue.toFixed(2)}`,
         branch,
         finishTimestamp,
-        { date, branch, totalRevenue }
+        { date, branch, totalRevenue },
+        new Date(date) // realDate: the actual batch date
       );
     }
 
@@ -294,7 +296,8 @@ const updateReturns = async (req, res) => {
           `${item.quantity} ${itemName} returned at ${branch}`,
           branch,
           activityTimestamp,
-          { itemCode: item.itemCode, quantity: item.quantity, date }
+          { itemCode: item.itemCode, quantity: item.quantity, date },
+          new Date(date) // realDate: the actual stock date
         );
       }
     }

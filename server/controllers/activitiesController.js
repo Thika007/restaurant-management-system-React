@@ -1,21 +1,41 @@
 const { getConnection, sql } = require('../config/db');
 
 // Helper function to create activity record
-const createActivity = async (type, message, branch, timestamp, metadata = null) => {
+const createActivity = async (type, message, branch, timestamp, metadata = null, realDate = null) => {
   try {
     const pool = await getConnection();
     const metadataJson = metadata ? JSON.stringify(metadata) : null;
     
-    await pool.request()
+    // Extract realDate from metadata if not provided and metadata contains 'date'
+    if (!realDate && metadata && metadata.date) {
+      try {
+        realDate = new Date(metadata.date);
+        if (isNaN(realDate.getTime())) {
+          realDate = null;
+        }
+      } catch (e) {
+        realDate = null;
+      }
+    }
+    
+    const request = pool.request()
       .input('type', sql.NVarChar, type)
       .input('message', sql.NVarChar(sql.MAX), message)
       .input('branch', sql.NVarChar, branch)
       .input('timestamp', sql.DateTime, timestamp || new Date())
-      .input('metadata', sql.NVarChar(sql.MAX), metadataJson)
-      .query(`
-        INSERT INTO RecentActivities (type, message, branch, timestamp, metadata)
-        VALUES (@type, @message, @branch, @timestamp, @metadata)
-      `);
+      .input('metadata', sql.NVarChar(sql.MAX), metadataJson);
+    
+    let query = `
+      INSERT INTO RecentActivities (type, message, branch, timestamp, metadata`;
+    
+    if (realDate) {
+      query += ', realDate) VALUES (@type, @message, @branch, @timestamp, @metadata, @realDate)';
+      request.input('realDate', sql.Date, realDate);
+    } else {
+      query += ') VALUES (@type, @message, @branch, @timestamp, @metadata)';
+    }
+    
+    await request.query(query);
   } catch (error) {
     console.error('Error creating activity:', error);
     // Don't throw error - activity logging should not break main operations
@@ -41,7 +61,7 @@ const getRecentActivities = async (req, res) => {
     const limitValue = parseInt(limit) || 100;
     let query = `
       SELECT TOP (${limitValue})
-        id, type, message, branch, timestamp, metadata, createdAt
+        id, type, message, branch, timestamp, metadata, createdAt, realDate
       FROM RecentActivities 
       WHERE 1=1
     `;
@@ -102,6 +122,13 @@ const getRecentActivities = async (req, res) => {
           date: activity.timestamp instanceof Date 
             ? activity.timestamp 
             : new Date(activity.timestamp),
+          realDate: activity.realDate != null ? (
+            activity.realDate instanceof Date 
+              ? activity.realDate.toISOString().split('T')[0]
+              : (typeof activity.realDate === 'string' 
+                  ? activity.realDate.split('T')[0] // Already in YYYY-MM-DD format
+                  : new Date(activity.realDate).toISOString().split('T')[0])
+          ) : null,
           metadata: activity.metadata ? (typeof activity.metadata === 'string' ? JSON.parse(activity.metadata) : activity.metadata) : null,
           createdAt: activity.createdAt instanceof Date 
             ? activity.createdAt.toISOString() 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, machinesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, getCurrentDate } from '../utils/helpers';
@@ -37,6 +37,20 @@ const AddStock = () => {
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [groceryFormData, setGroceryFormData] = useState({ quantity: '', expiryDate: '', addedDate: stockDate });
   const [machineFormData, setMachineFormData] = useState({ startValue: '', date: '' });
+  const [machineStatusMessage, setMachineStatusMessage] = useState('');
+  const [machineStatusClass, setMachineStatusClass] = useState('text-info');
+  
+  // Lock body scroll when machine modal is open
+  useEffect(() => {
+    if (showMachineModal) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showMachineModal]);
 
   // Get available branches based on user role
   const getAvailableBranches = () => {
@@ -278,10 +292,11 @@ const AddStock = () => {
         const activeBatch = response.data.batches[0];
         setMachineFormData({
           startValue: activeBatch.startValue.toString(),
-          date: todayDate // Always default to today's date, user can change it
+          date: todayDate
         });
-        // Set active batch for this machine
         setMachineBatches(response.data.batches);
+        setMachineStatusMessage('Active Batch Exists');
+        setMachineStatusClass('text-info');
       } else {
         // Try to get last completed batch end value
         const completedRes = await machinesAPI.getBatches({ 
@@ -302,32 +317,113 @@ const AddStock = () => {
         
         setMachineFormData({
           startValue: lastEndValue,
-          date: todayDate // Always default to today's date
+          date: todayDate
         });
         setMachineBatches([]);
+        setMachineStatusMessage('Ready to Start');
+        setMachineStatusClass('text-success');
       }
+      
+      // Check for completed batch on the default date (today)
+      checkMachineDateValidation(machine.code, todayDate);
     } catch (error) {
       setMachineFormData({
         startValue: '',
-        date: todayDate // Always default to today's date
+        date: todayDate
       });
       setMachineBatches([]);
+      setMachineStatusMessage('Ready to Start');
+      setMachineStatusClass('text-success');
     }
 
     setShowMachineModal(true);
   };
 
+  // Check machine date validation (future dates and completed batches)
+  const checkMachineDateValidation = async (machineCode, dateToCheck) => {
+    if (!machineCode || !dateToCheck) return;
+
+    // Check if date is in the future
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const selectedDate = new Date(dateToCheck + 'T00:00:00');
+    
+    if (selectedDate > today) {
+      setMachineStatusMessage(`⚠️ ERROR: Cannot start machine for future dates! Today is ${today.toISOString().split('T')[0]}`);
+      setMachineStatusClass('text-danger fw-bold');
+      return;
+    }
+
+    // Check for completed batch
+    try {
+      const completedRes = await machinesAPI.getBatches({
+        branch: selectedBranch,
+        machineCode: machineCode,
+        status: 'completed'
+      });
+
+      if (completedRes.data.success && completedRes.data.batches.length > 0) {
+        const normalizedDate = dateToCheck.split('T')[0];
+        const completedBatch = completedRes.data.batches.find(batch => {
+          let batchDate = batch.date;
+          if (batchDate) {
+            if (batchDate instanceof Date) {
+              batchDate = batchDate.toISOString().split('T')[0];
+            } else if (typeof batchDate === 'string') {
+              batchDate = batchDate.split('T')[0];
+            }
+          }
+          return batchDate === normalizedDate;
+        });
+
+        if (completedBatch) {
+          const endTime = completedBatch.endTime 
+            ? new Date(completedBatch.endTime).toLocaleString() 
+            : 'previously';
+          setMachineStatusMessage(`⚠️ WARNING: Batch already completed for this date! Finished on ${endTime}`);
+          setMachineStatusClass('text-danger fw-bold');
+        } else {
+          setMachineStatusMessage('Ready to Start');
+          setMachineStatusClass('text-success');
+        }
+      } else {
+        setMachineStatusMessage('Ready to Start');
+        setMachineStatusClass('text-success');
+      }
+    } catch (error) {
+      console.error('Check completed batch error:', error);
+      setMachineStatusMessage('Ready to Start');
+      setMachineStatusClass('text-success');
+    }
+  };
+
   const handleStartMachineBatch = async () => {
     if (!selectedBranch || !selectedMachine) return;
 
+    // Validate start value - show popup if empty or invalid
+    if (!machineFormData.startValue || machineFormData.startValue.trim() === '') {
+      showWarning('⚠️ Please enter a start value to start the machine batch.');
+      return;
+    }
+
     const startValue = parseInt(machineFormData.startValue);
     if (isNaN(startValue) || startValue < 0) {
-      showWarning('Please enter a valid start value.');
+      showWarning('⚠️ Please enter a valid start value. The value must be a number greater than or equal to 0.');
       return;
     }
 
     if (!machineFormData.date) {
-      showWarning('Please select a date.');
+      showWarning('⚠️ Please select a date.');
+      return;
+    }
+
+    // Check if date is in the future
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const selectedDate = new Date(machineFormData.date + 'T00:00:00');
+    
+    if (selectedDate > today) {
+      showError(`⚠️ ERROR: Cannot start a machine batch for a future date!\n\nSelected date: ${machineFormData.date}\nToday's date: ${today.toISOString().split('T')[0]}\n\nPlease select today's date or a past date only.`);
       return;
     }
 
@@ -350,7 +446,10 @@ const AddStock = () => {
         });
 
         if (endedOnSelectedDate) {
-          showError(`Cannot start "${selectedMachine.name}" because it was already ended on ${machineFormData.date}. Please select a different date.`);
+          const endTime = endedOnSelectedDate.endTime 
+            ? new Date(endedOnSelectedDate.endTime).toLocaleString() 
+            : 'previously';
+          showError(`⚠️ WARNING: This machine batch has already been completed for date ${machineFormData.date} and branch ${selectedBranch}.\n\nThe batch was finished on ${endTime}.\n\nYou cannot start a new batch for the same date and branch. Please select a different date or branch.`);
           return;
         }
       }
@@ -971,100 +1070,115 @@ const AddStock = () => {
         </div>
       )}
 
-      {/* Start Machine Batch Modal */}
+      {/* Start Machine Batch Slide Panel */}
       {showMachineModal && selectedMachine && (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Start Machine Batch</h5>
+        <div 
+          className={`slide-panel-overlay ${showMachineModal ? 'show' : ''}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowMachineModal(false);
+              setSelectedMachine(null);
+              setMachineFormData({ startValue: '', date: '' });
+            }
+          }}
+        >
+          <div className="slide-panel slide-panel-right" style={{ transform: showMachineModal ? 'translateX(0)' : 'translateX(100%)' }}>
+            <div className="slide-panel-header">
+              <h5 className="slide-panel-title">Start Machine Batch</h5>
+              <button
+                type="button"
+                className="btn-close"
+                onClick={() => {
+                  setShowMachineModal(false);
+                  setSelectedMachine(null);
+                  setMachineFormData({ startValue: '', date: '' });
+                }}
+              ></button>
+            </div>
+            <div className="slide-panel-body">
+              <div className="mb-3">
+                <label className="form-label">
+                  <strong>Machine:</strong> {selectedMachine.name}
+                </label>
+              </div>
+              <div className="mb-3">
+                <label className="form-label">
+                  <strong>Price per Unit:</strong> Rs {parseFloat(selectedMachine.price).toFixed(2)}
+                </label>
+              </div>
+              <div className="mb-3">
+                <label className="form-label">Start Value <span className="text-danger">*</span></label>
+                <input
+                  type="number"
+                  className="form-control"
+                  value={machineFormData.startValue}
+                  onChange={(e) => setMachineFormData({
+                    ...machineFormData,
+                    startValue: e.target.value
+                  })}
+                  min="0"
+                  required
+                  placeholder="Enter start value"
+                />
+              </div>
+              <div className="mb-3">
+                <label className="form-label">Date <span className="text-danger">*</span></label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={machineFormData.date || stockDate}
+                  max={getCurrentDate()}
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    setMachineFormData({
+                      ...machineFormData,
+                      date: newDate
+                    });
+                    if (selectedMachine) {
+                      checkMachineDateValidation(selectedMachine.code, newDate);
+                    }
+                  }}
+                  required
+                />
+              </div>
+              <div className="mb-3">
+                <label className="form-label">
+                  <strong>Status:</strong>
+                  <span className={`ms-2 ${machineStatusClass}`}>
+                    {machineStatusMessage || (hasActiveBatch ? 'Active Batch Exists' : 'Ready to Start')}
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className="slide-panel-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowMachineModal(false);
+                  setSelectedMachine(null);
+                  setMachineFormData({ startValue: '', date: '' });
+                }}
+              >
+                Cancel
+              </button>
+              {hasActiveBatch ? (
                 <button
                   type="button"
-                  className="btn-close"
-                  onClick={() => {
-                    setShowMachineModal(false);
-                    setSelectedMachine(null);
-                    setMachineFormData({ startValue: '', date: '' });
-                  }}
-                ></button>
-              </div>
-              <div className="modal-body">
-                <div className="mb-3">
-                  <label className="form-label">
-                    <strong>Machine:</strong> {selectedMachine.name}
-                  </label>
-                </div>
-                <div className="mb-3">
-                  <label className="form-label">
-                    <strong>Price per Unit:</strong> Rs {parseFloat(selectedMachine.price).toFixed(2)}
-                  </label>
-                </div>
-                <div className="mb-3">
-                  <label className="form-label">Start Value</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={machineFormData.startValue}
-                    onChange={(e) => setMachineFormData({
-                      ...machineFormData,
-                      startValue: e.target.value
-                    })}
-                    min="0"
-                    required
-                  />
-                </div>
-                <div className="mb-3">
-                  <label className="form-label">Date</label>
-                  <input
-                    type="date"
-                    className="form-control"
-                    value={machineFormData.date || stockDate}
-                    onChange={(e) => setMachineFormData({
-                      ...machineFormData,
-                      date: e.target.value
-                    })}
-                    required
-                  />
-                </div>
-                <div className="mb-3">
-                  <label className="form-label">
-                    <strong>Status:</strong>
-                    <span className={hasActiveBatch ? "text-info ms-2" : "text-success ms-2"}>
-                      {hasActiveBatch ? 'Active Batch Exists' : 'Ready to Start'}
-                    </span>
-                  </label>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setShowMachineModal(false);
-                    setSelectedMachine(null);
-                    setMachineFormData({ startValue: '', date: '' });
-                  }}
+                  className="btn btn-warning"
+                  onClick={handleStartMachineBatch}
                 >
-                  Cancel
+                  Update Start Value
                 </button>
-                {hasActiveBatch ? (
-                  <button
-                    type="button"
-                    className="btn btn-warning"
-                    onClick={handleStartMachineBatch}
-                  >
-                    Update Start Value
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={handleStartMachineBatch}
-                  >
-                    Start Machine
-                  </button>
-                )}
-              </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleStartMachineBatch}
+                >
+                  Start Machine
+                </button>
+              )}
             </div>
           </div>
         </div>

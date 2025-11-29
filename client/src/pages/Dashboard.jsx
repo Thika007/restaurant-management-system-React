@@ -26,11 +26,13 @@ const Dashboard = () => {
     return '';
   });
   const [dateFrom, setDateFrom] = useState(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - 7);
-    return date.toISOString().split('T')[0];
+    // Auto-select today's date for dateFrom
+    return getCurrentDate();
   });
-  const [dateTo, setDateTo] = useState(getCurrentDate());
+  const [dateTo, setDateTo] = useState(() => {
+    // Auto-select today's date for dateTo
+    return getCurrentDate();
+  });
   const [branches, setBranches] = useState([]);
   const [items, setItems] = useState([]);
   const [topSellingItems, setTopSellingItems] = useState([]);
@@ -55,21 +57,14 @@ const Dashboard = () => {
     try {
       console.log('Loading recent activities...'); // Debug log
       
-      // Calculate date range for recent activities (last 30 days to get more records)
-      const recentDate = new Date();
-      recentDate.setDate(recentDate.getDate() - 30);
-      const recentDateStr = recentDate.toISOString().split('T')[0];
-      const todayStr = new Date().toISOString().split('T')[0];
-
-      // Build query parameters - expand to 30 days or remove date filter to see all
+      // Build query parameters using the dashboard selected date range
       const params = {
-        // Temporarily remove date filtering to test - comment out dateFrom/dateTo
-        // dateFrom: recentDateStr,
-        // dateTo: todayStr,
+        dateFrom: dateFrom,
+        dateTo: dateTo,
         limit: 100
       };
       
-      console.log('Date range calculated:', { recentDateStr, todayStr }); // Debug log
+      console.log('Date range for activities:', { dateFrom, dateTo }); // Debug log
 
       // Filter by branch if selected
       if (branch && branch !== 'All Branches') {
@@ -86,6 +81,7 @@ const Dashboard = () => {
       if (activitiesRes.data && activitiesRes.data.success) {
         const activitiesArray = activitiesRes.data.activities || [];
         console.log(`Received ${activitiesArray.length} activities from API`);
+        console.log('Sample activity data:', activitiesArray[0]); // Debug: log first activity to see structure
         
         const activities = activitiesArray.map((activity, idx) => {
           try {
@@ -109,13 +105,29 @@ const Dashboard = () => {
               timestampDate = new Date();
             }
             
+            // Handle realDate - the actual stock/operation date
+            let realDate = null;
+            if (activity.realDate) {
+              try {
+                realDate = typeof activity.realDate === 'string'
+                  ? activity.realDate
+                  : (activity.realDate instanceof Date
+                      ? activity.realDate.toISOString().split('T')[0]
+                      : new Date(activity.realDate).toISOString().split('T')[0]);
+              } catch (e) {
+                console.warn(`Error parsing realDate for activity ${idx}:`, e);
+                realDate = null;
+              }
+            }
+            
             return {
               id: activity.id || `activity-${idx}`,
               type: activity.type || 'unknown',
               message: activity.message || '',
               branch: activity.branch || null,
               date: timestampDate,
-              timestamp: timestampDate.getTime()
+              timestamp: timestampDate.getTime(),
+              realDate: realDate
             };
           } catch (parseError) {
             console.error(`Error parsing activity ${idx}:`, parseError, activity);
@@ -138,7 +150,7 @@ const Dashboard = () => {
       console.error('Error details:', error.response?.data || error.message);
       setRecentActivities([]);
     }
-  }, [branch]);
+  }, [branch, dateFrom, dateTo]);
 
   useEffect(() => {
     loadInitialData();
@@ -162,7 +174,7 @@ const Dashboard = () => {
 
   // Load recent activities independently - doesn't need branches/items to be loaded
   useEffect(() => {
-    // Load immediately on mount
+    // Load immediately on mount and when filters change
     loadRecentActivities();
     
     // Auto-refresh recent activities every 30 seconds for real-time updates
@@ -171,7 +183,7 @@ const Dashboard = () => {
     }, 30000); // Refresh every 30 seconds
 
     return () => clearInterval(interval);
-  }, [branch, loadRecentActivities]);
+  }, [branch, dateFrom, dateTo, loadRecentActivities]);
 
   const loadInitialData = async () => {
     try {
@@ -730,7 +742,8 @@ const Dashboard = () => {
                 <table className="table table-hover">
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th>Update Date</th>
+                      <th>Real Date</th>
                       <th>Activity</th>
                       <th>Details</th>
                       <th>Branch</th>
@@ -739,16 +752,47 @@ const Dashboard = () => {
                   <tbody>
                     {paginatedActivities.length === 0 ? (
                       <tr>
-                        <td colSpan="4" className="text-center text-muted">No recent activity</td>
+                        <td colSpan="5" className="text-center text-muted">No recent activity</td>
                       </tr>
                     ) : (
                       paginatedActivities.map((activity, index) => {
-                        const dateStr = activity.date instanceof Date 
+                        const updateDateStr = activity.date instanceof Date 
                           ? activity.date.toLocaleString()
                           : (activity.date ? new Date(activity.date).toLocaleString() : 'N/A');
+                        
+                        // Format Real Date - show the actual stock/operation date
+                        let realDateStr = '-';
+                        if (activity.realDate) {
+                          try {
+                            // realDate should be a string in "YYYY-MM-DD" format from the API
+                            if (typeof activity.realDate === 'string') {
+                              // Parse YYYY-MM-DD format string
+                              const dateParts = activity.realDate.split('T')[0].split('-');
+                              if (dateParts.length === 3) {
+                                const realDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+                                if (!isNaN(realDate.getTime())) {
+                                  realDateStr = realDate.toLocaleDateString();
+                                }
+                              } else {
+                                // Try parsing as-is
+                                const realDate = new Date(activity.realDate);
+                                if (!isNaN(realDate.getTime())) {
+                                  realDateStr = realDate.toLocaleDateString();
+                                }
+                              }
+                            } else if (activity.realDate instanceof Date) {
+                              realDateStr = activity.realDate.toLocaleDateString();
+                            }
+                          } catch (e) {
+                            console.warn('Error formatting realDate:', e, activity.realDate);
+                            realDateStr = '-';
+                          }
+                        }
+                        
                         return (
                           <tr key={`${activity.id || activity.timestamp || index}-${index}`}>
-                            <td>{dateStr}</td>
+                            <td>{updateDateStr}</td>
+                            <td>{realDateStr}</td>
                             <td>{formatActivityType(activity.type)}</td>
                             <td>{activity.message || ''}</td>
                             <td>{activity.branch || '-'}</td>

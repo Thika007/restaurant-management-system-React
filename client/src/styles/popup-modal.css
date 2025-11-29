@@ -1,0 +1,228 @@
+/* Popup Modal Styles */
+.popup-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  z-index: 10001;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  animation: fadeIn 0.2s ease;
+  backdrop-filter: blur(2px);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.popup-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.3s ease;
+  overflow: hidden;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(-30px) scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.popup-modal-header {
+  display: flex;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 2px solid #e0e0e0;
+  gap: 12px;
+}
+
+.popup-modal-success .popup-modal-header {
+  border-bottom-color: var(--success-color, #27ae60);
+}
+
+.popup-modal-error .popup-modal-header {
+  border-bottom-color: var(--accent-color, #e74c3c);
+}
+
+.popup-modal-warning .popup-modal-header {
+  border-bottom-color: var(--warning-color, #f39c12);
+}
+
+.popup-modal-info .popup-modal-header {
+  border-bottom-color: var(--info-color, #17a2b8);
+}
+
+.popup-modal-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.popup-modal-title {
+  flex: 1;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.popup-modal-close {
+  background: none;
+  border: none;
+  font-size: 32px;
+  line-height: 1;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.popup-modal-close:hover {
+  background-color: #f0f0f0;
+  color: #333;
+}
+
+.popup-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  max-height: calc(90vh - 180px);
+}
+
+.popup-modal-message {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #444;
+  white-space: pre-line;
+}
+
+.popup-modal-message div {
+  margin-bottom: 8px;
+}
+
+.popup-modal-message div:last-child {
+  margin-bottom: 0;
+}
+
+.popup-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background-color: #f9f9f9;
+}
+
+.popup-modal-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 100px;
+}
+
+.popup-modal-btn:focus {
+  outline: 2px solid var(--secondary-color, #3498db);
+  outline-offset: 2px;
+}
+
+.popup-modal-btn-ok {
+  background-color: var(--secondary-color, #3498db);
+  color: white;
+}
+
+.popup-modal-btn-ok:hover {
+  background-color: #2980b9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.popup-modal-btn-ok:active {
+  transform: translateY(0);
+}
+
+.popup-modal-btn-confirm {
+  background-color: var(--success-color, #27ae60);
+  color: white;
+}
+
+.popup-modal-btn-confirm:hover {
+  background-color: #229954;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.popup-modal-btn-confirm:active {
+  transform: translateY(0);
+}
+
+.popup-modal-btn-cancel {
+  background-color: #e0e0e0;
+  color: #333;
+}
+
+.popup-modal-btn-cancel:hover {
+  background-color: #d0d0d0;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.popup-modal-btn-cancel:active {
+  transform: translateY(0);
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .popup-modal {
+    width: 95%;
+    max-width: 95%;
+  }
+
+  .popup-modal-header {
+    padding: 16px 20px;
+  }
+
+  .popup-modal-title {
+    font-size: 18px;
+  }
+
+  .popup-modal-body {
+    padding: 20px;
+  }
+
+  .popup-modal-footer {
+    padding: 12px 20px;
+    flex-direction: column-reverse;
+  }
+
+  .popup-modal-btn {
+    width: 100%;
+  }
+}
+

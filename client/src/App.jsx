@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { PopupProvider } from './context/PopupContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Layout from './components/Layout';
@@ -34,7 +35,8 @@ function App() {
   // If user exists, redirect to dashboard for root path
   return (
     <ToastProvider>
-      <Routes>
+      <PopupProvider>
+        <Routes>
       <Route 
         path="/login" 
         element={
@@ -63,7 +65,8 @@ function App() {
           </PrivateRoute>
         }
       />
-    </Routes>
+        </Routes>
+      </PopupProvider>
     </ToastProvider>
   );
 }

@@ -3,11 +3,11 @@ import { itemsAPI, branchesAPI, stocksAPI, groceryAPI, machinesAPI } from '../se
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency } from '../utils/helpers';
 import { exportToExcel, exportToPDF } from '../utils/exportUtils';
-import { useToast } from '../context/ToastContext';
+import { usePopup } from '../context/PopupContext';
 
 const AddReturn = () => {
   const { user } = useAuth();
-  const { showSuccess, showError, showWarning, showInfo } = useToast();
+  const { showPopup, showConfirm } = usePopup();
   const [selectedType, setSelectedType] = useState('Normal Item');
   const [loading, setLoading] = useState(true);
 
@@ -231,12 +231,12 @@ const AddReturn = () => {
   // Normal Items - Update Returns
   const handleUpdateReturns = async () => {
     if (!selectedBranch) {
-      showWarning('Please select a branch first.');
+      await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
       return;
     }
 
     if (isBatchFinished) {
-      showWarning(`This batch is already finished for ${selectedBranch} (${returnDate}).`);
+      await showPopup('⚠️ WARNING', `This batch is already finished for ${selectedBranch} (${returnDate}). Cannot update returns.`, 'warning');
       return;
     }
 
@@ -249,7 +249,7 @@ const AddReturn = () => {
     });
 
     if (itemsToReturn.length === 0) {
-      showWarning('No return quantities entered.');
+      await showPopup('⚠️ Warning', 'No return quantities entered. Please enter at least one return quantity.', 'warning');
       return;
     }
 
@@ -261,7 +261,8 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        showSuccess('Returns updated successfully!');
+        const itemCount = itemsToReturn.length;
+        await showPopup('✅ Success', `${itemCount} item(s) returned for ${selectedBranch} on ${returnDate}.`, 'success');
         // Reset quantities
         const resetQuantities = {};
         Object.keys(returnQuantities).forEach(code => {
@@ -272,33 +273,52 @@ const AddReturn = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update returns';
-      showError(message);
+      await showPopup('❌ Error', message, 'error');
       console.error('Update returns error:', error);
     }
   };
 
   // Normal Items - Clear Returns
-  const handleClearReturns = () => {
+  const handleClearReturns = async () => {
+    // Check if there are any entered quantities
+    const hasEnteredQuantities = Object.values(returnQuantities).some(qty => qty && qty.trim() !== '');
+    
+    if (!hasEnteredQuantities) {
+      await showPopup('ℹ️ Info', 'No return quantities to clear.', 'info');
+      return;
+    }
+
+    const confirmed = await showConfirm('⚠️ Confirmation', 'Are you sure you want to clear all entered return quantities? This action cannot be undone.', 'warning');
+    if (!confirmed) {
+      return;
+    }
+
     const resetQuantities = {};
     Object.keys(returnQuantities).forEach(code => {
       resetQuantities[code] = '';
     });
     setReturnQuantities(resetQuantities);
+    await showPopup('✅ Success', 'All return quantities have been cleared.', 'success');
   };
 
   // Normal Items - Finish Batch
   const handleFinishBatch = async () => {
     if (!selectedBranch) {
-      showWarning('Please select a branch.');
+      await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
       return;
     }
 
     if (isBatchFinished) {
-      showWarning(`This batch is already finished for ${selectedBranch} (${returnDate}).`);
+      await showPopup('⚠️ WARNING', `This batch is already finished for ${selectedBranch} (${returnDate}). Cannot finish again.`, 'warning');
       return;
     }
 
-    if (!window.confirm('Are you sure you want to finish this batch? This will calculate sold quantities and lock the batch.')) {
+    const confirmed = await showConfirm(
+      '⚠️ CONFIRMATION', 
+      `Are you sure you want to finish this batch?\n\nBranch: ${selectedBranch}\nDate: ${returnDate}\n\nThis will:\n- Calculate sold quantities\n- Lock the batch permanently\n- Prevent further stock updates\n\nThis action cannot be undone.`,
+      'warning'
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -309,12 +329,12 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        showSuccess('Batch finished! Sold quantities calculated.');
+        await showPopup('✅ Success', `Batch finished successfully!\n\nBranch: ${selectedBranch}\nDate: ${returnDate}\n\nSold quantities have been calculated and the batch is now locked.`, 'success');
         loadNormalStocks();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to finish batch';
-      showError(message);
+      await showPopup('❌ Error', message, 'error');
       console.error('Finish batch error:', error);
     }
   };
@@ -322,11 +342,13 @@ const AddReturn = () => {
   // Grocery - Update Remaining (records sales)
   const handleUpdateGroceryRemaining = async () => {
     if (!selectedBranch) {
-      showWarning('Please select a branch.');
+      await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
       return;
     }
 
     const updates = [];
+    const errors = [];
+    
     Object.keys(groceryRemaining).forEach(itemCode => {
       const item = items.find(i => i.code === itemCode);
       const newRemainingValue = groceryRemaining[itemCode];
@@ -344,7 +366,7 @@ const AddReturn = () => {
         // Validate newRemaining doesn't exceed total stock
         const currentTotalStock = getGroceryStockTotal(itemCode);
         if (newRemaining > currentTotalStock) {
-          showError(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock}).`);
+          errors.push(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock})`);
           return;
         }
         
@@ -352,8 +374,35 @@ const AddReturn = () => {
       }
     });
 
+    if (errors.length > 0) {
+      await showPopup('❌ Error', `${errors.join('\n')}\n\nPlease correct the values and try again.`, 'error');
+      return;
+    }
+
     if (updates.length === 0) {
-      showWarning('No valid remaining quantities entered.');
+      await showPopup('⚠️ Warning', 'No valid remaining quantities entered. Please enter at least one remaining quantity.', 'warning');
+      return;
+    }
+
+    // Confirmation before updating remaining (records sales)
+    const itemCount = updates.length;
+    
+    // Get item names for the confirmation message
+    const itemNames = updates.map(update => {
+      const item = items.find(i => i.code === update.itemCode);
+      return item ? item.name : update.itemCode;
+    }).join(', ');
+    
+    const itemListText = itemCount <= 5 
+      ? `\nItems: ${itemNames}` 
+      : `\nItems: ${itemCount} item(s) (${itemNames.split(',').slice(0, 3).join(', ')}... and ${itemCount - 3} more)`;
+    
+    const confirmed = await showConfirm(
+      '⚠️ CONFIRMATION', 
+      `Update Remaining Quantities (Record Sales)\n\nBranch: ${selectedBranch}\nTotal Items: ${itemCount} item(s)${itemListText}\n\nThis will:\n- Record sales based on remaining quantities\n- Update Total Stock for all items\n- Clear any entered return quantities\n\nDo you want to continue?`,
+      'warning'
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -364,7 +413,7 @@ const AddReturn = () => {
       });
 
       if (response.data.success) {
-        showSuccess('Grocery remaining updated! Sales recorded. Total Stock updated.');
+        await showPopup('✅ Success', `Grocery remaining quantities updated!\n\nBranch: ${selectedBranch}\nItems Updated: ${itemCount} item(s)\n\n- Sales have been recorded\n- Total Stock has been updated\n- Return quantities have been cleared`, 'success');
         // Reload stocks to get updated remaining quantities from database
         // This will refresh Total Stock display on both pages
         await loadGroceryStocks(false);
@@ -374,7 +423,7 @@ const AddReturn = () => {
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to update grocery remaining';
-      showError(message);
+      await showPopup('❌ Error', message, 'error');
       console.error('Update grocery remaining error:', error);
     }
   };
@@ -382,13 +431,14 @@ const AddReturn = () => {
   // Grocery - Update Returns
   const handleUpdateGroceryReturns = async () => {
     if (!selectedBranch) {
-      showWarning('Please select a branch.');
+      await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
       return;
     }
 
     const today = new Date().toISOString().split('T')[0];
     const itemsToReturn = [];
     const returnQuantitiesMap = {}; // Track return quantities for each item
+    const errors = [];
 
     Object.keys(groceryReturnQty).forEach(itemCode => {
       const item = items.find(i => i.code === itemCode);
@@ -406,7 +456,7 @@ const AddReturn = () => {
         // Validate return quantity doesn't exceed available stock
         const totalStock = getGroceryStockTotal(itemCode);
         if (returnQty > totalStock) {
-          showError(`${item?.name || itemCode}: Return quantity (${returnQty}) cannot exceed available stock (${totalStock}).`);
+          errors.push(`${item?.name || itemCode}: Return quantity (${returnQty}) cannot exceed available stock (${totalStock})`);
           return;
         }
         
@@ -424,8 +474,27 @@ const AddReturn = () => {
       }
     });
 
+    if (errors.length > 0) {
+      await showPopup('❌ Error', `${errors.join('\n')}\n\nPlease correct the values and try again.`, 'error');
+      return;
+    }
+
     if (itemsToReturn.length === 0) {
-      showWarning('No valid grocery return quantities entered.');
+      await showPopup('⚠️ Warning', 'No valid grocery return quantities entered. Please enter at least one return quantity.', 'warning');
+      return;
+    }
+
+    // Confirmation before recording returns
+    const itemCount = itemsToReturn.length;
+    const totalReturnQty = itemsToReturn.reduce((sum, item) => sum + item.returnedQty, 0);
+    const itemNames = itemsToReturn.map(item => `- ${item.itemName}: ${item.returnedQty}`).join('\n');
+    
+    const confirmed = await showConfirm(
+      '⚠️ CONFIRMATION', 
+      `Record Grocery Returns\n\nBranch: ${selectedBranch}\nDate: ${returnDate || today}\nItems: ${itemCount} item(s)\nTotal Quantity: ${totalReturnQty}\n\nItems to return:\n${itemNames}\n\nThis will:\n- Record returns as waste\n- Update stock quantities\n- Cannot be undone\n\nDo you want to continue?`,
+      'warning'
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -451,46 +520,72 @@ const AddReturn = () => {
         return cleared;
       });
 
-      showSuccess('Grocery returns recorded! Stock quantities updated.');
+      await showPopup('✅ Success', `Grocery returns recorded!\n\nBranch: ${selectedBranch}\nDate: ${returnDate || today}\nItems Returned: ${itemCount} item(s)\nTotal Quantity: ${totalReturnQty}\n\nStock quantities have been updated.`, 'success');
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to record grocery returns';
-      showError(message);
+      await showPopup('❌ Error', message, 'error');
       console.error('Update grocery returns error:', error);
     }
   };
 
   // Machine - Finish Batch
   const handleFinishMachineBatch = async (batchId) => {
-    const endValue = parseInt(machineEndValues[batchId]);
+    const endValue = machineEndValues[batchId];
     
-    if (isNaN(endValue) || endValue < 0) {
-      showWarning('Please enter a valid end value.');
+    if (!endValue || endValue.trim() === '') {
+      await showPopup('⚠️ Warning', 'Please enter an end value to finish the batch.', 'warning');
+      return;
+    }
+
+    const parsedEndValue = parseInt(endValue);
+    
+    if (isNaN(parsedEndValue) || parsedEndValue < 0) {
+      await showPopup('⚠️ Warning', 'Please enter a valid end value. The value must be a number greater than or equal to 0.', 'warning');
       return;
     }
 
     const batch = machineBatches.find(b => b.id === batchId);
     if (!batch) {
-      showError('Batch not found.');
+      await showPopup('❌ Error', 'Batch not found.', 'error');
       return;
     }
 
-    if (endValue < batch.startValue) {
-      showError('End value cannot be less than start value.');
+    const machine = items.find(item => item.code === batch.machineCode);
+    const machineName = machine ? machine.name : batch.machineCode;
+    const price = machine ? parseFloat(machine.price) : 0;
+
+    if (parsedEndValue < batch.startValue) {
+      await showPopup('❌ Error', `End value (${parsedEndValue}) cannot be less than start value (${batch.startValue}).`, 'error');
+      return;
+    }
+
+    const soldQty = parsedEndValue - batch.startValue;
+    const totalCash = soldQty * price;
+
+    // Confirmation before finishing machine batch
+    const confirmed = await showConfirm(
+      '⚠️ CONFIRMATION', 
+      `Finish Machine Batch\n\nMachine: ${machineName}\nBranch: ${selectedBranch}\nDate: ${returnDate}\nStart Value: ${batch.startValue}\nEnd Value: ${parsedEndValue}\nSold Quantity: ${soldQty} units\nTotal Cash: Rs ${totalCash.toFixed(2)}\n\nThis will:\n- Complete the batch permanently\n- Record the sales\n- Lock the batch\n\nThis action cannot be undone.\n\nDo you want to continue?`,
+      'warning'
+    );
+    if (!confirmed) {
       return;
     }
 
     try {
       const response = await machinesAPI.finishBatch(batchId, {
-        endValue: endValue
+        endValue: parsedEndValue
       });
 
       if (response.data.success) {
-        showSuccess(`Batch completed! Sold ${response.data.soldQty} units. Total: Rs ${response.data.totalCash?.toFixed(2) || '0.00'}`);
+        const soldQtyResult = response.data.soldQty || soldQty;
+        const totalCashResult = response.data.totalCash || totalCash;
+        await showPopup('✅ Success', `Machine batch completed!\n\nMachine: ${machineName}\nBranch: ${selectedBranch}\nDate: ${returnDate}\nStart Value: ${batch.startValue}\nEnd Value: ${parsedEndValue}\n\nSold Quantity: ${soldQtyResult} units\nTotal Cash: Rs ${totalCashResult.toFixed(2)}\n\nThe batch has been completed and locked.`, 'success');
         loadMachineBatches();
       }
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to finish machine batch';
-      showError(message);
+      await showPopup('❌ Error', message, 'error');
       console.error('Finish machine batch error:', error);
     }
   };
@@ -569,9 +664,9 @@ const AddReturn = () => {
     });
   };
 
-  const handleExport = (format) => {
+  const handleExport = async (format) => {
     if (!selectedBranch) {
-      showWarning('Please select a branch first.');
+      await showPopup('⚠️ Warning', 'Please select a branch first before exporting.', 'warning');
       return;
     }
 
@@ -579,33 +674,51 @@ const AddReturn = () => {
     let rows = [];
     let title = '';
     let filename = '';
+    let reportType = '';
 
     if (selectedType === 'Normal Item') {
       headers = ['Item Name', 'Category', 'Total Returned', 'Entered Return Qty'];
       rows = getNormalReturnExportRows();
       title = `Inventory Returns - ${selectedBranch} (${returnDate})`;
       filename = buildFilename('inventory_returns');
+      reportType = 'Inventory Returns';
     } else if (selectedType === 'Grocery Item') {
       headers = ['Item Name', 'Category', 'Total Stock', 'Remaining Quantity', 'Return Quantity'];
       rows = getGroceryReturnExportRows();
       title = `Grocery Returns - ${selectedBranch}`;
       filename = buildFilename('grocery_returns');
+      reportType = 'Grocery Returns';
     } else if (selectedType === 'Machine') {
       headers = ['Machine Name', 'Start Value', 'End Value', 'Price per Unit (Rs.)'];
       rows = getMachineReturnExportRows();
       title = `Machine Returns - ${selectedBranch}`;
       filename = buildFilename('machine_returns');
+      reportType = 'Machine Returns';
     }
 
     if (!rows || rows.length === 0) {
-      showWarning('No data available to export.');
+      await showPopup('⚠️ Warning', `No data available to export.\n\nPlease ensure:\n- Branch is selected\n- Data exists for ${reportType}\n- Filters are set correctly`, 'warning');
       return;
     }
 
-    if (format === 'excel') {
-      exportToExcel({ filename, sheetName: 'Report', headers, rows });
-    } else {
-      exportToPDF({ filename, title, headers, rows });
+    try {
+      const formatName = format === 'excel' ? 'Excel' : 'PDF';
+      const rowCount = rows.length;
+      
+      if (format === 'excel') {
+        exportToExcel({ filename, sheetName: 'Report', headers, rows });
+        setTimeout(async () => {
+          await showPopup('✅ Success', `Export completed!\n\nReport Type: ${reportType}\nFormat: ${formatName}\nBranch: ${selectedBranch}\nRows: ${rowCount} item(s)\n\nFile: ${filename}.xlsx\n\nThe file has been downloaded.`, 'success');
+        }, 500);
+      } else {
+        exportToPDF({ filename, title, headers, rows });
+        setTimeout(async () => {
+          await showPopup('✅ Success', `Export completed!\n\nReport Type: ${reportType}\nFormat: ${formatName}\nBranch: ${selectedBranch}\nRows: ${rowCount} item(s)\n\nFile: ${filename}.pdf\n\nThe file has been downloaded.`, 'success');
+        }, 500);
+      }
+    } catch (error) {
+      await showPopup('❌ Error', `Failed to export ${format.toUpperCase()} file.\n\nPlease try again or contact support if the problem persists.`, 'error');
+      console.error('Export error:', error);
     }
   };
 

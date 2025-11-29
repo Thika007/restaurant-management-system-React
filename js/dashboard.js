@@ -725,16 +725,15 @@ function loadTopSellingItems() {
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname.includes('dashboard.html')) {
-        // Set default date range (last 7 days)
-        const dateTo = new Date();
-        const dateFrom = new Date();
-        dateFrom.setDate(dateFrom.getDate() - 7);
+        // Set both date pickers to today's date
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
         
         if (document.getElementById('dateTo')) {
-            document.getElementById('dateTo').value = dateTo.toISOString().split('T')[0];
+            document.getElementById('dateTo').value = todayStr;
         }
         if (document.getElementById('dateFrom')) {
-            document.getElementById('dateFrom').value = dateFrom.toISOString().split('T')[0];
+            document.getElementById('dateFrom').value = todayStr;
         }
         
         // Check if user has limited branch access
