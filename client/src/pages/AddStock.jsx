@@ -142,10 +142,21 @@ const AddStock = () => {
         setMachineBatches([]);
         return;
       }
-      const response = await machinesAPI.getBatches({ branch: selectedBranch, status: 'active' });
-      if (response.data.success) {
-        setMachineBatches(response.data.batches || []);
+      // Load both active and completed batches for all machines in this branch
+      const [activeRes, completedRes] = await Promise.all([
+        machinesAPI.getBatches({ branch: selectedBranch, status: 'active' }),
+        machinesAPI.getBatches({ branch: selectedBranch, status: 'completed' })
+      ]);
+      
+      const allBatches = [];
+      if (activeRes.data.success && activeRes.data.batches) {
+        allBatches.push(...activeRes.data.batches);
       }
+      if (completedRes.data.success && completedRes.data.batches) {
+        allBatches.push(...completedRes.data.batches);
+      }
+      
+      setMachineBatches(allBatches);
     } catch (error) {
       console.error('Load machine batches error:', error);
       setMachineBatches([]);
@@ -542,10 +553,31 @@ const AddStock = () => {
     };
   };
 
-  // Check if machine has active batch
+  // Check machine status (active, ended, or not started)
   const getMachineStatus = (machineCode) => {
-    const batch = machineBatches.find(b => b.machineCode === machineCode);
-    return batch ? { status: 'Active', batch } : { status: 'Not Started', batch: null };
+    // Find all batches for this machine (should only be one active at most)
+    const batches = machineBatches.filter(b => b.machineCode === machineCode);
+    
+    // First check for active batch
+    const activeBatch = batches.find(b => b.status === 'active');
+    if (activeBatch) {
+      return { status: 'Active', batch: activeBatch };
+    }
+    
+    // Then check for completed/ended batch (get the most recent one)
+    const completedBatches = batches.filter(b => b.status === 'completed');
+    if (completedBatches.length > 0) {
+      // Sort by endTime or date to get the most recent
+      const sorted = completedBatches.sort((a, b) => {
+        const dateA = a.endTime ? new Date(a.endTime) : new Date(a.date);
+        const dateB = b.endTime ? new Date(b.endTime) : new Date(b.date);
+        return dateB - dateA; // Most recent first
+      });
+      return { status: 'Ended', batch: sorted[0] };
+    }
+    
+    // No batch found
+    return { status: 'Not Started', batch: null };
   };
 
   const buildFilename = (prefix) => {
@@ -951,11 +983,15 @@ const AddStock = () => {
                   ) : (
                     filteredItems.map(machine => {
                       const { status } = getMachineStatus(machine.code);
+                      const statusClass = 
+                        status === 'Active' ? 'text-success fw-bold' :
+                        status === 'Ended' ? 'text-secondary' :
+                        '';
                       return (
                         <tr key={machine.code}>
                           <td>{machine.name}</td>
                           <td>Rs {parseFloat(machine.price).toFixed(2)}</td>
-                          <td className={status === 'Active' ? 'text-success' : ''}>
+                          <td className={statusClass}>
                             {status}
                           </td>
                           <td>
