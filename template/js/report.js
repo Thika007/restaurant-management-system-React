@@ -1,5 +1,32 @@
 // reports.js - Reports functionality
 
+// Format date to display only date part (YYYY-MM-DD)
+function formatDateOnly(dateString) {
+  if (!dateString) return '';
+  
+  // If it's already in YYYY-MM-DD format, return as is
+  if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return dateString;
+  }
+  
+  // If it's an ISO string with time, extract just the date part
+  if (typeof dateString === 'string' && dateString.includes('T')) {
+    return dateString.split('T')[0];
+  }
+  
+  // Try to parse as Date and format
+  try {
+    const date = new Date(dateString);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().split('T')[0];
+    }
+  } catch (error) {
+    // If parsing fails, return original
+  }
+  
+  return dateString;
+}
+
 // Generate financial report
 function generateReport() {
   const dateFrom = document.getElementById('dateFrom').value;
@@ -82,9 +109,10 @@ function generateReport() {
         (!dateTo || sale.date <= dateTo) &&
         (branch === 'All Branches' || sale.branch === branch)
       ) {
-        const key = `${sale.date}|${sale.branch}|${sale.itemCode}`;
+        const normalizedDate = formatDateOnly(sale.date);
+        const key = `${normalizedDate}|${sale.branch}|${sale.itemCode}`;
         if (!groceryAgg[key]) {
-          groceryAgg[key] = { date: sale.date, branch: sale.branch, itemCode: sale.itemCode, itemName: sale.itemName, soldQty: 0, revenue: 0, addedQty: 0 };
+          groceryAgg[key] = { date: normalizedDate, branch: sale.branch, itemCode: sale.itemCode, itemName: sale.itemName, soldQty: 0, revenue: 0, addedQty: 0 };
         }
         groceryAgg[key].soldQty += Number(sale.soldQty || 0);
         groceryAgg[key].revenue += Number(sale.totalCash || 0);
@@ -97,10 +125,11 @@ function generateReport() {
         (!dateTo || stock.date <= dateTo) &&
         (branch === 'All Branches' || stock.branch === branch)
       ) {
-        const key = `${stock.date}|${stock.branch}|${stock.itemCode}`;
+        const normalizedDate = formatDateOnly(stock.date);
+        const key = `${normalizedDate}|${stock.branch}|${stock.itemCode}`;
         if (!groceryAgg[key]) {
           const item = items.find(i => i.code === stock.itemCode);
-          groceryAgg[key] = { date: stock.date, branch: stock.branch, itemCode: stock.itemCode, itemName: item ? item.name : stock.itemCode, soldQty: 0, revenue: 0, addedQty: 0 };
+          groceryAgg[key] = { date: normalizedDate, branch: stock.branch, itemCode: stock.itemCode, itemName: item ? item.name : stock.itemCode, soldQty: 0, revenue: 0, addedQty: 0 };
         }
         groceryAgg[key].addedQty += Number(stock.quantity || 0);
       }
@@ -112,10 +141,11 @@ function generateReport() {
         (!dateTo || ret.date <= dateTo) &&
         (branch === 'All Branches' || ret.branch === branch)
       ) {
-        const key = `${ret.date}|${ret.branch}|${ret.itemCode}`;
+        const normalizedDate = formatDateOnly(ret.date);
+        const key = `${normalizedDate}|${ret.branch}|${ret.itemCode}`;
         if (!groceryAgg[key]) {
           const item = items.find(i => i.code === ret.itemCode);
-          groceryAgg[key] = { date: ret.date, branch: ret.branch, itemCode: ret.itemCode, itemName: item ? item.name : ret.itemName || ret.itemCode, soldQty: 0, revenue: 0, addedQty: 0, returnedQty: 0 };
+          groceryAgg[key] = { date: normalizedDate, branch: ret.branch, itemCode: ret.itemCode, itemName: item ? item.name : ret.itemName || ret.itemCode, soldQty: 0, revenue: 0, addedQty: 0, returnedQty: 0 };
         }
         groceryAgg[key].returnedQty = (groceryAgg[key].returnedQty || 0) + Number(ret.returnedQty || 0);
       }
@@ -131,7 +161,7 @@ function generateReport() {
       const label = type==='branch' ? row.branch : (row.itemName + ' (Grocery)');
       tableBody += `
         <tr class="table-success">
-          <td>${row.date}</td>
+          <td>${formatDateOnly(row.date)}</td>
           <td>${row.branch}</td>
           <td>${label}</td>
           <td>Grocery Item</td>
@@ -370,8 +400,9 @@ function generateReport() {
         (!dateTo || r.date <= dateTo) &&
         (branch === 'All Branches' || r.branch === branch)
       ) {
-        const keyAgg = `${r.date}|${r.branch}|${r.itemCode}`;
-        if (!groceryAgg[keyAgg]) groceryAgg[keyAgg] = { date: r.date, branch: r.branch, itemCode: r.itemCode, added: 0, returned: 0, transferred: 0 };
+        const normalizedDate = formatDateOnly(r.date);
+        const keyAgg = `${normalizedDate}|${r.branch}|${r.itemCode}`;
+        if (!groceryAgg[keyAgg]) groceryAgg[keyAgg] = { date: normalizedDate, branch: r.branch, itemCode: r.itemCode, added: 0, returned: 0, transferred: 0 };
         groceryAgg[keyAgg].returned += Number(r.returnedQty || 0);
       }
     });
@@ -386,12 +417,13 @@ function generateReport() {
       ) {
         t.items.forEach(it => {
           // As addedItems is per date-branch, count transfers as negative at sender and positive at receiver
-          const senderKey = `${t.date}|${t.senderBranch}|${it.itemCode}`;
-          if (!groceryAgg[senderKey]) groceryAgg[senderKey] = { date: t.date, branch: t.senderBranch, itemCode: it.itemCode, added: 0, returned: 0, transferred: 0 };
+          const normalizedDate = formatDateOnly(t.date);
+          const senderKey = `${normalizedDate}|${t.senderBranch}|${it.itemCode}`;
+          if (!groceryAgg[senderKey]) groceryAgg[senderKey] = { date: normalizedDate, branch: t.senderBranch, itemCode: it.itemCode, added: 0, returned: 0, transferred: 0 };
           groceryAgg[senderKey].transferred += Number(it.quantity || 0);
 
-          const receiverKey = `${t.date}|${t.receiverBranch}|${it.itemCode}`;
-          if (!groceryAgg[receiverKey]) groceryAgg[receiverKey] = { date: t.date, branch: t.receiverBranch, itemCode: it.itemCode, added: 0, returned: 0, transferred: 0 };
+          const receiverKey = `${normalizedDate}|${t.receiverBranch}|${it.itemCode}`;
+          if (!groceryAgg[receiverKey]) groceryAgg[receiverKey] = { date: normalizedDate, branch: t.receiverBranch, itemCode: it.itemCode, added: 0, returned: 0, transferred: 0 };
           // For receiver, reflect as added stock
           groceryAgg[receiverKey].added += Number(it.quantity || 0);
         });
@@ -425,7 +457,7 @@ function generateReport() {
       
       tableBody += `
         <tr class="table-success">
-          <td>${row.date}</td>
+          <td>${formatDateOnly(row.date)}</td>
           <td>${row.branch}</td>
           <td>${item.name} (Grocery)</td>
           <td>Grocery Item</td>

@@ -16,11 +16,11 @@ const Reports = () => {
   
   // Filter states
   const [dateFrom, setDateFrom] = useState(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - 7);
-    return date.toISOString().split('T')[0];
+    return new Date().toISOString().split('T')[0];
   });
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
   const [filterBranch, setFilterBranch] = useState('All Branches');
   const [reportType, setReportType] = useState('item');
   const [itemFilter, setItemFilter] = useState('');
@@ -31,6 +31,43 @@ const Reports = () => {
   const [items, setItems] = useState([]);
 
   const isAdmin = user?.role === 'admin';
+
+  // Format date to display only date part (YYYY-MM-DD)
+  const formatDateOnly = (dateValue) => {
+    if (!dateValue) return '';
+    
+    // If it's already in YYYY-MM-DD format, return as is
+    if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+      return dateValue;
+    }
+    
+    // If it's a string with time (ISO format), extract just the date part
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      return dateValue.split('T')[0];
+    }
+    
+    // If it's a Date object, convert to string
+    if (dateValue instanceof Date) {
+      return dateValue.toISOString().split('T')[0];
+    }
+    
+    // Try to parse as Date and format
+    try {
+      const date = new Date(dateValue);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0];
+      }
+    } catch (error) {
+      // If parsing fails, return original
+    }
+    
+    // If it's a string without T, try to extract first 10 characters (YYYY-MM-DD)
+    if (typeof dateValue === 'string' && dateValue.length >= 10) {
+      return dateValue.substring(0, 10);
+    }
+    
+    return dateValue;
+  };
 
   // Get available branches based on user role
   const getAvailableBranches = () => {
@@ -169,7 +206,7 @@ const Reports = () => {
       
       if (grocerySalesRes.data.success) {
         for (const sale of grocerySalesRes.data.sales || []) {
-          const saleDate = sale.date ? (typeof sale.date === 'string' ? sale.date : sale.date.toISOString().split('T')[0]) : '';
+          const saleDate = formatDateOnly(sale.date);
           if (itemFilter && sale.itemName !== itemFilter) continue;
           if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
           if (reportType === 'item' && (sale.soldQty || 0) <= 0) continue;
@@ -237,11 +274,12 @@ const Reports = () => {
   };
 
   const generateReturnsReport = async () => {
-    const head = ['Item', 'Type', 'Total Waste Qty'];
+    const head = ['Item', 'Type', 'Branch', 'Total Waste Qty', 'Total Value (Rs.)'];
     setTableHead(head);
     
     const body = [];
-    const wasteByItem = {};
+    const wasteByItemBranch = {};
+    let totalWasteValue = 0;
 
     // Process normal item returns from stocks
     if (filterBranch === 'All Branches' || filterBranch) {
@@ -263,11 +301,17 @@ const Reports = () => {
                 if (itemFilter && item.name !== itemFilter) continue;
                 if (itemTypeFilter && 'Normal Item' !== itemTypeFilter) continue;
                 
-                const wasteKey = `${item.code}||Normal Item`;
-                if (!wasteByItem[wasteKey]) {
-                  wasteByItem[wasteKey] = { name: item.name, type: 'Normal Item', qty: 0 };
+                const wasteKey = `${item.code}||${branch}||Normal Item`;
+                if (!wasteByItemBranch[wasteKey]) {
+                  wasteByItemBranch[wasteKey] = { 
+                    name: item.name, 
+                    type: 'Normal Item', 
+                    branch: branch,
+                    qty: 0,
+                    price: parseFloat(item.price || 0)
+                  };
                 }
-                wasteByItem[wasteKey].qty += stock.returned || 0;
+                wasteByItemBranch[wasteKey].qty += stock.returned || 0;
               }
             }
           } catch (err) {
@@ -290,24 +334,52 @@ const Reports = () => {
           if (itemFilter && ret.itemName !== itemFilter) continue;
           if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
           
-          const wasteKey = `${ret.itemCode}||Grocery Item`;
-          if (!wasteByItem[wasteKey]) {
-            wasteByItem[wasteKey] = { name: ret.itemName, type: 'Grocery Item', qty: 0 };
+          const item = items.find(i => i.code === ret.itemCode);
+          const wasteKey = `${ret.itemCode}||${ret.branch}||Grocery Item`;
+          if (!wasteByItemBranch[wasteKey]) {
+            wasteByItemBranch[wasteKey] = { 
+              name: ret.itemName, 
+              type: 'Grocery Item', 
+              branch: ret.branch,
+              qty: 0,
+              price: item ? parseFloat(item.price || 0) : 0
+            };
           }
-          wasteByItem[wasteKey].qty += ret.returnedQty || 0;
+          wasteByItemBranch[wasteKey].qty += parseFloat(ret.returnedQty || 0);
         }
       }
     } catch (error) {
       console.error('Error fetching grocery returns:', error);
     }
 
-    // Convert to table rows
-    Object.values(wasteByItem).forEach(waste => {
-      body.push([waste.name, waste.type, waste.qty]);
+    // Convert to table rows with total value calculation
+    Object.values(wasteByItemBranch).forEach(waste => {
+      const totalValue = waste.qty * waste.price;
+      totalWasteValue += totalValue;
+      
+      const qtyDisplay = waste.type === 'Grocery Item' && items.find(i => i.name === waste.name)?.soldByWeight
+        ? Number(waste.qty).toFixed(3)
+        : Math.round(waste.qty);
+      
+      body.push([
+        waste.name, 
+        waste.type, 
+        waste.branch,
+        qtyDisplay,
+        `Rs ${totalValue.toFixed(2)}`
+      ]);
     });
 
+    // Add total row
+    if (body.length > 0) {
+      body.push({
+        isTotal: true,
+        cells: ['', '', '', 'Total Waste Value', `Rs ${totalWasteValue.toFixed(2)}`]
+      });
+    }
+
     if (body.length === 0) {
-      body.push({ cells: ['No return data available.'], colSpan: 3 });
+      body.push({ cells: ['No return data available.'], colSpan: 5 });
     }
 
     setTableBody(body);
@@ -473,10 +545,11 @@ const Reports = () => {
         
         if (groceryReturnsRes.data.success) {
           for (const ret of groceryReturnsRes.data.returns || []) {
-            const keyAgg = `${ret.date}|${ret.branch}|${ret.itemCode}`;
+            const normalizedDate = formatDateOnly(ret.date);
+            const keyAgg = `${normalizedDate}|${ret.branch}|${ret.itemCode}`;
             if (!groceryAgg[keyAgg]) {
               groceryAgg[keyAgg] = {
-                date: ret.date,
+                date: normalizedDate,
                 branch: ret.branch,
                 itemCode: ret.itemCode,
                 added: 0,
@@ -512,10 +585,11 @@ const Reports = () => {
             const transferItems = Array.isArray(transfer.items) ? transfer.items : [];
             for (const item of transferItems) {
               // Sender: count as transferred (negative)
-              const senderKey = `${transfer.date}|${transfer.senderBranch}|${item.itemCode}`;
+              const normalizedDate = formatDateOnly(transfer.date);
+              const senderKey = `${normalizedDate}|${transfer.senderBranch}|${item.itemCode}`;
               if (!groceryAgg[senderKey]) {
                 groceryAgg[senderKey] = {
-                  date: transfer.date,
+                  date: normalizedDate,
                   branch: transfer.senderBranch,
                   itemCode: item.itemCode,
                   added: 0,
@@ -526,10 +600,10 @@ const Reports = () => {
               groceryAgg[senderKey].transferred += parseFloat(item.quantity || 0);
               
               // Receiver: count as added (positive)
-              const receiverKey = `${transfer.date}|${transfer.receiverBranch}|${item.itemCode}`;
+              const receiverKey = `${normalizedDate}|${transfer.receiverBranch}|${item.itemCode}`;
               if (!groceryAgg[receiverKey]) {
                 groceryAgg[receiverKey] = {
-                  date: transfer.date,
+                  date: normalizedDate,
                   branch: transfer.receiverBranch,
                   itemCode: item.itemCode,
                   added: 0,
@@ -571,7 +645,7 @@ const Reports = () => {
           const availableDisplay = item.soldByWeight ? Number(availableQty).toFixed(3) : Math.round(availableQty);
           
           body.push([
-            row.date,
+            formatDateOnly(row.date),
             row.branch,
             `${item.name} (Grocery)`,
             'Grocery Item',
@@ -589,7 +663,7 @@ const Reports = () => {
           const availableDisplay = item.soldByWeight ? Number(calculatedAvailable).toFixed(3) : Math.round(calculatedAvailable);
           
           body.push([
-            row.date,
+            formatDateOnly(row.date),
             row.branch,
             `${item.name} (Grocery)`,
             'Grocery Item',

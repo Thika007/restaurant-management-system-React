@@ -303,13 +303,25 @@ const recordGroceryReturn = async (req, res) => {
 
 const updateGroceryRemaining = async (req, res) => {
   try {
-    const { branch, updates } = req.body; // updates: [{ itemCode, newRemaining }]
+    const { branch, updates, date } = req.body; // updates: [{ itemCode, newRemaining }]
     
     if (!branch || !updates || !Array.isArray(updates)) {
       return res.status(400).json({ success: false, message: 'Invalid request data' });
     }
 
     const pool = await getConnection();
+    
+    // Check if grocery batch is finished for this date and branch
+    if (date) {
+      const finishedCheck = await pool.request()
+        .input('date', sql.Date, date)
+        .input('branch', sql.NVarChar, branch)
+        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+      
+      if (finishedCheck.recordset.length > 0) {
+        return res.status(400).json({ success: false, message: 'Grocery batch is already finished. Cannot update remaining quantities.' });
+      }
+    }
 
     for (const update of updates) {
       // Get current stocks for this item and branch
@@ -662,6 +674,150 @@ const getGroceryStocksByDate = async (req, res) => {
   }
 };
 
+const checkGroceryFinished = async (req, res) => {
+  try {
+    const { date, branch } = req.query;
+    
+    if (!date || !branch) {
+      return res.status(400).json({ success: false, message: 'Date and branch are required' });
+    }
+
+    const pool = await getConnection();
+    
+    // Check if grocery batch is finished
+    // Note: Using FinishedBatches table - if itemType field exists, filter by it
+    // Otherwise, check if any batch is finished (may conflict with normal items)
+    let query = `
+      SELECT finishedAt 
+      FROM FinishedBatches 
+      WHERE date = @date AND branch = @branch
+    `;
+    
+    // Try to check if itemType column exists and use it if available
+    try {
+      const columnCheck = await pool.request()
+        .query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'FinishedBatches' AND COLUMN_NAME = 'itemType'
+        `);
+      
+      if (columnCheck.recordset.length > 0) {
+        query += ' AND itemType = @itemType';
+      }
+    } catch (e) {
+      // Column doesn't exist, use query without itemType filter
+    }
+    
+    const request = pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch);
+    
+    if (query.includes('@itemType')) {
+      request.input('itemType', sql.NVarChar, 'Grocery Item');
+    }
+    
+    const result = await request.query(query);
+
+    res.json({ 
+      success: true, 
+      isFinished: result.recordset.length > 0,
+      finishedAt: result.recordset.length > 0 && result.recordset[0].finishedAt
+        ? (result.recordset[0].finishedAt instanceof Date 
+            ? result.recordset[0].finishedAt.toISOString() 
+            : new Date(result.recordset[0].finishedAt).toISOString())
+        : null
+    });
+  } catch (error) {
+    console.error('Check grocery finished error:', error);
+    res.status(500).json({ success: false, message: 'Error checking grocery finish status' });
+  }
+};
+
+const finishGroceryBatch = async (req, res) => {
+  try {
+    const { date, branch } = req.body;
+
+    if (!date || !branch) {
+      return res.status(400).json({ success: false, message: 'Date and branch are required' });
+    }
+
+    const pool = await getConnection();
+    
+    // Check if already finished
+    let checkQuery = 'SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch';
+    let hasItemType = false;
+    
+    // Check if itemType column exists
+    try {
+      const columnCheck = await pool.request()
+        .query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'FinishedBatches' AND COLUMN_NAME = 'itemType'
+        `);
+      
+      if (columnCheck.recordset.length > 0) {
+        hasItemType = true;
+        checkQuery += ' AND itemType = @itemType';
+      }
+    } catch (e) {
+      // Column doesn't exist
+    }
+    
+    const checkRequest = pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch);
+    
+    if (hasItemType) {
+      checkRequest.input('itemType', sql.NVarChar, 'Grocery Item');
+    }
+    
+    const checkResult = await checkRequest.query(checkQuery);
+
+    if (checkResult.recordset.length > 0) {
+      return res.status(400).json({ success: false, message: 'Grocery batch is already finished' });
+    }
+
+    // Mark batch as finished
+    let insertQuery = 'INSERT INTO FinishedBatches (date, branch, finishedAt';
+    let valuesQuery = 'VALUES (@date, @branch, GETDATE()';
+    
+    if (hasItemType) {
+      insertQuery += ', itemType';
+      valuesQuery += ', @itemType';
+    }
+    
+    insertQuery += ') ' + valuesQuery + ')';
+    
+    const insertRequest = pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch);
+    
+    if (hasItemType) {
+      insertRequest.input('itemType', sql.NVarChar, 'Grocery Item');
+    }
+    
+    await insertRequest.query(insertQuery);
+
+    // Log activity for grocery batch finish
+    const activityTimestamp = new Date();
+    await createActivity(
+      'grocery_batch_finished',
+      `Grocery batch finished at ${branch}`,
+      branch,
+      activityTimestamp,
+      { date, branch },
+      new Date(date) // realDate: the actual batch date
+    );
+
+    res.json({ success: true, message: 'Grocery batch finished successfully' });
+  } catch (error) {
+    console.error('Finish grocery batch error:', error);
+    res.status(500).json({ success: false, message: 'Error finishing grocery batch' });
+  }
+};
+
 module.exports = {
   getGroceryStocks,
   getGroceryStocksByDate,
@@ -670,6 +826,8 @@ module.exports = {
   recordGrocerySale,
   getGroceryReturns,
   recordGroceryReturn,
-  updateGroceryRemaining
+  updateGroceryRemaining,
+  checkGroceryFinished,
+  finishGroceryBatch
 };
 

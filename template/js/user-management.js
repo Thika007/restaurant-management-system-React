@@ -1,5 +1,32 @@
 // user-management.js - User Management Functions
 
+// Format date for display
+function formatDate(dateString) {
+  if (!dateString || dateString === 'Never') {
+    return 'Never';
+  }
+  
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      return dateString; // Return original if invalid date
+    }
+    
+    // Format: "Nov 30, 2025 11:45 PM"
+    const options = {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    };
+    return date.toLocaleString('en-US', options);
+  } catch (error) {
+    return dateString; // Return original if formatting fails
+  }
+}
+
 // Clear add user form
 function clearUserForm() {
   document.getElementById('userName').value = '';
@@ -75,7 +102,7 @@ function loadUsers() {
               <td>
                   <span class="badge bg-success">${user.status}</span>
               </td>
-              <td>${user.lastLogin || 'Never'}</td>
+              <td>${formatDate(user.lastLogin)}</td>
               <td>
                   <button class="btn btn-sm btn-primary me-1" onclick="editUser('${user.id}')">
                       <i class="fas fa-edit"></i>

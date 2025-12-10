@@ -271,6 +271,28 @@ const CashManagement = () => {
     return 'bg-danger';
   };
 
+  // Format date to display only date part (YYYY-MM-DD)
+  const formatDateOnly = (dateValue) => {
+    if (!dateValue) return '';
+    
+    // If it's already in YYYY-MM-DD format, return as is
+    if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+      return dateValue;
+    }
+    
+    // If it's a string with time (ISO format), extract just the date part
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      return dateValue.split('T')[0];
+    }
+    
+    // If it's a Date object, convert to string
+    if (dateValue instanceof Date) {
+      return dateValue.toISOString().split('T')[0];
+    }
+    
+    return dateValue;
+  };
+
   if (loading) {
     return <div className="text-center p-5">Loading...</div>;
   }
@@ -343,7 +365,7 @@ const CashManagement = () => {
                   ) : (
                     filteredEntries.map((entry, index) => (
                       <tr key={index}>
-                        <td>{entry.date}</td>
+                        <td>{formatDateOnly(entry.date)}</td>
                         <td>{entry.branch}</td>
                         <td>Rs {parseFloat(entry.expected || 0).toFixed(2)}</td>
                         <td>
@@ -397,7 +419,7 @@ const CashManagement = () => {
                   ) : (
                     filteredEntries.map((entry, index) => (
                       <tr key={index}>
-                        <td>{entry.date}</td>
+                        <td>{formatDateOnly(entry.date)}</td>
                         <td>{entry.branch}</td>
                         <td>
                           Rs {parseFloat(entry.actualCash || 0).toFixed(2)}

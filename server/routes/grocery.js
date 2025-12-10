@@ -10,6 +10,8 @@ router.post('/sales', groceryController.recordGrocerySale);
 router.get('/returns', groceryController.getGroceryReturns);
 router.post('/returns', groceryController.recordGroceryReturn);
 router.put('/stocks/remaining', groceryController.updateGroceryRemaining);
+router.get('/check-finished', groceryController.checkGroceryFinished);
+router.post('/finish-batch', groceryController.finishGroceryBatch);
 
 module.exports = router;
 

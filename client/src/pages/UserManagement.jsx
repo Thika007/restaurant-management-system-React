@@ -2,6 +2,33 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import { usersAPI, branchesAPI } from '../services/api';
 
+// Format date for display
+const formatDate = (dateString) => {
+  if (!dateString || dateString === 'Never') {
+    return 'Never';
+  }
+  
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      return dateString; // Return original if invalid date
+    }
+    
+    // Format: "Nov 30, 2025 11:45 PM"
+    const options = {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    };
+    return date.toLocaleString('en-US', options);
+  } catch (error) {
+    return dateString; // Return original if formatting fails
+  }
+};
+
 const UserManagement = () => {
   const { showSuccess, showError, showWarning, showInfo } = useToast();
   const [loading, setLoading] = useState(true);
@@ -379,7 +406,7 @@ const UserManagement = () => {
                     {user.status || 'Active'}
                   </span>
                 </td>
-                <td>{user.lastLogin || 'Never'}</td>
+                <td>{formatDate(user.lastLogin)}</td>
                 <td>
                   <button
                     className="btn btn-sm btn-primary me-1"

@@ -31,6 +31,7 @@ const AddReturn = () => {
   // Grocery states
   const [groceryRemaining, setGroceryRemaining] = useState({});
   const [groceryReturnQty, setGroceryReturnQty] = useState({});
+  const [isGroceryFinished, setIsGroceryFinished] = useState(false);
 
   // Machine states
   const [machineEndValues, setMachineEndValues] = useState({});
@@ -122,17 +123,8 @@ const AddReturn = () => {
         const groceryItems = items.filter(item => item.itemType === 'Grocery Item');
         
         groceryItems.forEach(item => {
-          const itemStocks = freshStocks.filter(s => s.itemCode === item.code);
-          // Total Stock = sum of remaining from all batches for this item
-          const totalStock = itemStocks.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
-          
-          // Initialize remaining with current total stock from database
-          // This ensures the field shows the current available stock
-          if (totalStock > 0) {
-            remaining[item.code] = item.soldByWeight ? Number(totalStock).toFixed(3) : Math.trunc(totalStock).toString();
-          } else {
-            remaining[item.code] = '0';
-          }
+          // Keep remaining field empty for better UX (user will fill it)
+          remaining[item.code] = '';
           
           // Preserve return quantity only if preserveReturnQty is true and user has entered something
           if (preserveReturnQty) {
@@ -146,14 +138,14 @@ const AddReturn = () => {
         // Ensure all grocery items are in the state, even if they have no stocks
         groceryItems.forEach(item => {
           if (!remaining.hasOwnProperty(item.code)) {
-            remaining[item.code] = '0';
+            remaining[item.code] = '';
           }
           if (!returnQty.hasOwnProperty(item.code)) {
             returnQty[item.code] = '';
           }
         });
         
-        // Always update remaining quantities with fresh API data
+        // Always update remaining quantities (empty fields)
         setGroceryRemaining(remaining);
         
         // Update return quantities based on preserve flag
@@ -169,6 +161,17 @@ const AddReturn = () => {
           });
         } else {
           setGroceryReturnQty(returnQty);
+        }
+        
+        // Check if grocery batch is finished for this date and branch
+        try {
+          const finishCheckRes = await groceryAPI.checkFinished({ date: returnDate, branch: selectedBranch });
+          if (finishCheckRes.data.success) {
+            setIsGroceryFinished(finishCheckRes.data.isFinished || false);
+          }
+        } catch (error) {
+          console.error('Error checking grocery finish status:', error);
+          setIsGroceryFinished(false);
         }
       }
     } catch (error) {
@@ -339,7 +342,183 @@ const AddReturn = () => {
     }
   };
 
-  // Grocery - Update Remaining (records sales)
+  // Grocery - Combined Update (handles both remaining and returns)
+  const handleUpdateGrocery = async () => {
+    if (!selectedBranch) {
+      await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
+      return;
+    }
+
+    if (isGroceryFinished) {
+      await showPopup('⚠️ WARNING', `Grocery batch is already finished for ${selectedBranch} (${returnDate}). Cannot update.`, 'warning');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const updates = [];
+    const itemsToReturn = [];
+    const errors = [];
+    
+    // Process remaining quantities (for sales)
+    Object.keys(groceryRemaining).forEach(itemCode => {
+      const item = items.find(i => i.code === itemCode);
+      const newRemainingValue = groceryRemaining[itemCode];
+      
+      // Skip if empty (user may only want to update returns)
+      if (newRemainingValue === '' || newRemainingValue === null || newRemainingValue === undefined) {
+        return;
+      }
+
+      const newRemaining = item && item.soldByWeight 
+        ? parseFloat(newRemainingValue) 
+        : parseFloat(newRemainingValue);
+      
+      if (!isNaN(newRemaining) && newRemaining >= 0) {
+        // Validate newRemaining doesn't exceed total stock
+        const currentTotalStock = getGroceryStockTotal(itemCode);
+        if (newRemaining > currentTotalStock) {
+          errors.push(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock})`);
+          return;
+        }
+        
+        updates.push({ itemCode, newRemaining });
+      }
+    });
+
+    // Process return quantities
+    Object.keys(groceryReturnQty).forEach(itemCode => {
+      const item = items.find(i => i.code === itemCode);
+      const returnQtyValue = groceryReturnQty[itemCode];
+      
+      if (!returnQtyValue || returnQtyValue === '') {
+        return;
+      }
+      
+      const returnQty = item && item.soldByWeight 
+        ? parseFloat(returnQtyValue) 
+        : parseInt(returnQtyValue);
+      
+      if (returnQty > 0 && !isNaN(returnQty)) {
+        // Validate return quantity doesn't exceed available stock
+        const totalStock = getGroceryStockTotal(itemCode);
+        if (returnQty > totalStock) {
+          errors.push(`${item?.name || itemCode}: Return quantity (${returnQty}) cannot exceed available stock (${totalStock})`);
+          return;
+        }
+        
+        itemsToReturn.push({
+          itemCode,
+          itemName: item?.name || '',
+          branch: selectedBranch,
+          date: returnDate || today,
+          returnedQty: returnQty,
+          reason: 'waste'
+        });
+      }
+    });
+
+    if (errors.length > 0) {
+      await showPopup('❌ Error', `${errors.join('\n')}\n\nPlease correct the values and try again.`, 'error');
+      return;
+    }
+
+    if (updates.length === 0 && itemsToReturn.length === 0) {
+      await showPopup('⚠️ Warning', 'No quantities entered. Please enter at least one remaining or return quantity.', 'warning');
+      return;
+    }
+
+    // Confirmation
+    const itemCount = Math.max(updates.length, itemsToReturn.length);
+    const updateText = updates.length > 0 ? `\n- Update remaining: ${updates.length} item(s)` : '';
+    const returnText = itemsToReturn.length > 0 ? `\n- Record returns: ${itemsToReturn.length} item(s)` : '';
+    
+    const confirmed = await showConfirm(
+      '⚠️ CONFIRMATION', 
+      `Update Grocery Stock\n\nBranch: ${selectedBranch}\nDate: ${returnDate || today}\nTotal Items: ${itemCount} item(s)${updateText}${returnText}\n\nThis will:\n- Update remaining quantities (record sales)${updates.length > 0 ? '' : ' (if entered)'}\n- Record returns as waste${itemsToReturn.length > 0 ? '' : ' (if entered)'}\n- Update Total Stock\n\nDo you want to continue?`,
+      'warning'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      // Update remaining quantities first (records sales)
+      if (updates.length > 0) {
+        await groceryAPI.updateRemaining({
+          branch: selectedBranch,
+          date: returnDate,
+          updates: updates
+        });
+      }
+
+      // Record returns
+      if (itemsToReturn.length > 0) {
+        for (const returnItem of itemsToReturn) {
+          await groceryAPI.recordReturn(returnItem);
+        }
+      }
+
+      // Small delay to ensure database transactions complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Reload stocks
+      await loadGroceryStocks(false);
+
+      // Clear all quantities after successful update
+      setGroceryReturnQty({});
+      setGroceryRemaining({});
+
+      const updateMsg = updates.length > 0 ? `\n- Remaining quantities updated (${updates.length} item(s))` : '';
+      const returnMsg = itemsToReturn.length > 0 ? `\n- Returns recorded (${itemsToReturn.length} item(s))` : '';
+      
+      await showPopup('✅ Success', `Grocery stock updated!\n\nBranch: ${selectedBranch}\nDate: ${returnDate || today}${updateMsg}${returnMsg}\n\nStock quantities have been updated.`, 'success');
+    } catch (error) {
+      const message = error.response?.data?.message || 'Failed to update grocery stock';
+      await showPopup('❌ Error', message, 'error');
+      console.error('Update grocery error:', error);
+    }
+  };
+
+  // Grocery - Finish Batch
+  const handleFinishGroceryBatch = async () => {
+    if (!selectedBranch) {
+      await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
+      return;
+    }
+
+    if (isGroceryFinished) {
+      await showPopup('⚠️ WARNING', `Grocery batch is already finished for ${selectedBranch} (${returnDate}). Cannot finish again.`, 'warning');
+      return;
+    }
+
+    const confirmed = await showConfirm(
+      '⚠️ CONFIRMATION', 
+      `Finish Grocery Batch\n\nBranch: ${selectedBranch}\nDate: ${returnDate}\n\nThis will:\n- Lock the batch permanently\n- Prevent further remaining quantity updates\n- Must be done before cash management entry\n\nThis action cannot be undone.\n\nDo you want to continue?`,
+      'warning'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await groceryAPI.finishBatch({
+        date: returnDate,
+        branch: selectedBranch
+      });
+
+      if (response.data.success) {
+        await showPopup('✅ Success', `Grocery batch finished successfully!\n\nBranch: ${selectedBranch}\nDate: ${returnDate}\n\nThe batch is now locked and cannot be updated.`, 'success');
+        setIsGroceryFinished(true);
+        loadGroceryStocks(false);
+      }
+    } catch (error) {
+      const message = error.response?.data?.message || 'Failed to finish grocery batch';
+      await showPopup('❌ Error', message, 'error');
+      console.error('Finish grocery batch error:', error);
+    }
+  };
+
+  // Grocery - Update Remaining (records sales) - DEPRECATED, kept for reference
   const handleUpdateGroceryRemaining = async () => {
     if (!selectedBranch) {
       await showPopup('⚠️ Warning', 'Please select a branch first.', 'warning');
@@ -802,16 +981,14 @@ const AddReturn = () => {
                 ))}
               </select>
             </div>
-            {(selectedType === 'Normal Item' || selectedType === 'Machine') && (
-              <div className="col-md-3">
-                <input
-                  type="date"
-                  className="form-control"
-                  value={returnDate}
-                  onChange={(e) => setReturnDate(e.target.value)}
-                />
-              </div>
-            )}
+            <div className="col-md-3">
+              <input
+                type="date"
+                className="form-control"
+                value={returnDate}
+                onChange={(e) => setReturnDate(e.target.value)}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -963,16 +1140,24 @@ const AddReturn = () => {
                 <div className="mb-3">
                   <button
                     className="btn btn-primary me-2"
-                    onClick={handleUpdateGroceryRemaining}
+                    onClick={handleUpdateGrocery}
+                    disabled={isGroceryFinished}
                   >
-                    Update Remaining
+                    Update
                   </button>
                   <button
-                    className="btn btn-warning"
-                    onClick={handleUpdateGroceryReturns}
+                    className="btn btn-success"
+                    onClick={handleFinishGroceryBatch}
+                    disabled={isGroceryFinished}
                   >
-                    Update Returns
+                    Finish
                   </button>
+                  {isGroceryFinished && (
+                    <span className="ms-3 text-danger">
+                      <i className="fas fa-lock me-1"></i>
+                      Grocery batch is finished for {selectedBranch} ({returnDate})
+                    </span>
+                  )}
                 </div>
                 <table className="table table-hover">
                   <thead>
@@ -1034,6 +1219,7 @@ const AddReturn = () => {
                                 max={totalStock}
                                 step={item.soldByWeight ? "0.001" : "1"}
                                 placeholder={item.soldByWeight ? Number(totalStock).toFixed(3) : Math.trunc(totalStock).toString()}
+                                disabled={isGroceryFinished}
                               />
                             </td>
                             <td>
@@ -1048,6 +1234,7 @@ const AddReturn = () => {
                                 min="0"
                                 step={item.soldByWeight ? "0.001" : "1"}
                                 placeholder="0"
+                                disabled={isGroceryFinished}
                               />
                             </td>
                           </tr>

@@ -1,13 +1,44 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Default API URL - will be updated after loading from connection.txt
+const DEFAULT_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+// Function to load API URL from connection.txt file
+async function loadApiUrl() {
+  try {
+    // Try to fetch connection.txt from the dist folder
+    const response = await fetch('/connection.txt');
+    if (response.ok) {
+      const url = (await response.text()).trim();
+      // Only use the fetched URL if it's not empty
+      if (url && url.length > 0) {
+        return url;
+      }
+    }
+  } catch (error) {
+    // If fetch fails (file doesn't exist or network error), fall back to defaults
+    console.warn('Could not load connection.txt, using default API URL:', error);
+  }
+  
+  // Fall back to environment variable or default
+  return DEFAULT_API_URL;
+}
+
+// Initialize axios with default URL
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: DEFAULT_API_URL,
   headers: {
     'Content-Type': 'application/json'
   }
 });
+
+// Export a function to initialize the API URL
+export async function initializeApiUrl() {
+  const apiUrl = await loadApiUrl();
+  api.defaults.baseURL = apiUrl;
+  console.log('API URL initialized:', apiUrl);
+  return apiUrl;
+}
 
 // Request interceptor for auth token if needed
 api.interceptors.request.use(
@@ -90,7 +121,9 @@ export const groceryAPI = {
   recordSale: (data) => api.post('/grocery/sales', data),
   getReturns: (params) => api.get('/grocery/returns', { params }),
   recordReturn: (data) => api.post('/grocery/returns', data),
-  updateRemaining: (data) => api.put('/grocery/stocks/remaining', data)
+  updateRemaining: (data) => api.put('/grocery/stocks/remaining', data),
+  checkFinished: (params) => api.get('/grocery/check-finished', { params }),
+  finishBatch: (data) => api.post('/grocery/finish-batch', data)
 };
 
 // Machines API

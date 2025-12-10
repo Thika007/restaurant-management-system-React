@@ -12,7 +12,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from React build
-app.use(express.static(path.join(__dirname, '../dist')));
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -36,7 +37,17 @@ app.get('/api/health', (req, res) => {
 
 // Serve React app for all non-API routes (must be after API routes)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
+  const indexPath = path.join(distPath, 'index.html');
+  // Check if file exists before sending
+  const fs = require('fs');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).json({ 
+      success: false, 
+      message: 'React app not built. Please run "npm run build" in the client directory.' 
+    });
+  }
 });
 
 // Error handling middleware
