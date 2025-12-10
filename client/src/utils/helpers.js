@@ -6,6 +6,15 @@ export const formatCurrency = (amount) => {
   return `Rs ${parseFloat(amount || 0).toFixed(2)}`;
 };
 
+export const formatNumber = (num, decimals = 0) => {
+  if (num === null || num === undefined || isNaN(num)) return '0';
+  const number = parseFloat(num);
+  if (decimals === 0) {
+    return number.toLocaleString();
+  }
+  return number.toFixed(decimals).replace(/\.?0+$/, '');
+};
+
 export const formatDate = (date) => {
   if (!date) return '-';
   const d = date instanceof Date ? date : new Date(date);

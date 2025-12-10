@@ -56,7 +56,8 @@ const createTransfer = async (req, res) => {
       const senderCheck = await pool.request()
         .input('date', sql.Date, date)
         .input('branch', sql.NVarChar, senderBranch)
-        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+        .input('itemType', sql.NVarChar, 'Normal Item')
+        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
       if (senderCheck.recordset.length > 0) {
         return res.status(400).json({ success: false, message: `Cannot transfer: ${senderBranch} has finished batch` });
@@ -65,7 +66,8 @@ const createTransfer = async (req, res) => {
       const receiverCheck = await pool.request()
         .input('date', sql.Date, date)
         .input('branch', sql.NVarChar, receiverBranch)
-        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+        .input('itemType', sql.NVarChar, 'Normal Item')
+        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
       if (receiverCheck.recordset.length > 0) {
         return res.status(400).json({ success: false, message: `Cannot transfer: ${receiverBranch} has finished batch` });

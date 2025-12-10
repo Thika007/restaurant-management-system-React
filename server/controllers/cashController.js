@@ -49,12 +49,13 @@ const calculateExpectedCash = async (req, res) => {
     const stocksResult = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Normal Item')
       .query(`
         SELECT s.itemCode, s.added, s.returned, s.transferred, i.price, i.itemType
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
-        INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch
-        WHERE s.date = @date AND s.branch = @branch AND i.itemType = 'Normal Item'
+        INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch AND f.itemType = @itemType
+        WHERE s.date = @date AND s.branch = @branch AND i.itemType = @itemType
       `);
 
     let expected = 0;
@@ -150,12 +151,13 @@ const calculateExpectedCashInternal = async (pool, branch, date) => {
     const stocksResult = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Normal Item')
       .query(`
         SELECT s.itemCode, s.added, s.returned, s.transferred, i.price
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
-        INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch
-        WHERE s.date = @date AND s.branch = @branch AND i.itemType = 'Normal Item'
+        INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch AND f.itemType = @itemType
+        WHERE s.date = @date AND s.branch = @branch AND i.itemType = @itemType
       `);
 
     stocksResult.recordset.forEach(stock => {

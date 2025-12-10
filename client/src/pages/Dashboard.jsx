@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { branchesAPI, stocksAPI, cashAPI, groceryAPI, machinesAPI, itemsAPI, transfersAPI, usersAPI, activitiesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { getCurrentDate, formatCurrency, getDateRange } from '../utils/helpers';
+import { getCurrentDate, formatCurrency, formatNumber, getDateRange } from '../utils/helpers';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -470,19 +470,47 @@ const Dashboard = () => {
 
     // Sort dates and prepare chart data
     const sortedDates = Object.keys(salesData).sort();
-    const chartLabels = sortedDates;
+    
+    // Format dates to show only date (no time) in readable format
+    // Use a format that Chart.js won't try to parse as dates
+    const chartLabels = sortedDates.map(dateStr => {
+      try {
+        // Parse the date string (YYYY-MM-DD format)
+        const dateParts = dateStr.split('-');
+        if (dateParts.length === 3) {
+          const year = dateParts[0];
+          const month = parseInt(dateParts[1], 10);
+          const day = parseInt(dateParts[2], 10);
+          
+          // Create date object for formatting
+          const date = new Date(year, month - 1, day);
+          if (isNaN(date.getTime())) {
+            return dateStr; // Fallback to original if parsing fails
+          }
+          
+          // Format as "Dec 1" or "Dec 1, 2025" - simple format that doesn't look like ISO
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          return `${monthNames[month - 1]} ${day}`;
+        }
+        return dateStr; // Fallback to original if format is unexpected
+      } catch (e) {
+        return dateStr; // Fallback to original if formatting fails
+      }
+    });
+    
     const chartData = sortedDates.map(date => salesData[date]);
 
     // Destroy previous chart if it exists
     if (chartInstanceRef.current) {
       chartInstanceRef.current.destroy();
+      chartInstanceRef.current = null;
     }
 
-    // Create new chart
+    // Create new chart with explicit category scale configuration
     chartInstanceRef.current = new Chart(ctx.getContext('2d'), {
       type: 'line',
       data: {
-        labels: chartLabels,
+        labels: chartLabels.map(label => String(label)), // Ensure all labels are strings
         datasets: [{
           label: 'Daily Sales (Rs)',
           data: chartData,
@@ -496,12 +524,28 @@ const Dashboard = () => {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        interaction: {
+          intersect: false,
+          mode: 'index'
+        },
         scales: {
+          x: {
+            type: 'category',
+            display: true,
+            ticks: {
+              maxRotation: 45,
+              minRotation: 45,
+              autoSkip: false
+            },
+            grid: {
+              display: true
+            }
+          },
           y: {
             beginAtZero: true,
             ticks: {
               callback: function(value) {
-                return 'Rs ' + value;
+                return 'Rs ' + value.toLocaleString();
               }
             }
           }
@@ -510,6 +554,18 @@ const Dashboard = () => {
           legend: {
             display: true,
             position: 'top'
+          },
+          tooltip: {
+            callbacks: {
+              title: function(context) {
+                // Show formatted date in tooltip
+                const index = context[0].dataIndex;
+                return chartLabels[index] || sortedDates[index] || '';
+              },
+              label: function(context) {
+                return `Sales: Rs ${context.parsed.y.toLocaleString()}`;
+              }
+            }
           }
         }
       }
@@ -627,7 +683,13 @@ const Dashboard = () => {
             <div className="card-body">
               <span className="metric-icon"><i className="fa-solid fa-cart-shopping"></i></span>
               <div className="metric-texts">
-                <div className="metric-value">{stats.itemsSold}</div>
+                <div className="metric-value">
+                  {typeof stats.itemsSold === 'number' 
+                    ? stats.itemsSold % 1 === 0 
+                      ? formatNumber(stats.itemsSold) 
+                      : formatNumber(stats.itemsSold, 3)
+                    : stats.itemsSold}
+                </div>
                 <div className="metric-label">Items Sold</div>
               </div>
             </div>
@@ -638,7 +700,13 @@ const Dashboard = () => {
             <div className="card-body">
               <span className="metric-icon"><i className="fa-solid fa-scale-balanced"></i></span>
               <div className="metric-texts">
-                <div className="metric-value">{stats.cashAccuracy}</div>
+                <div className="metric-value">
+                  {stats.cashAccuracy === 'N/A' ? (
+                    <span className="text-muted" style={{ fontSize: '0.9em' }}>No Data</span>
+                  ) : (
+                    stats.cashAccuracy
+                  )}
+                </div>
                 <div className="metric-label">Cash Accuracy</div>
               </div>
             </div>
@@ -649,7 +717,13 @@ const Dashboard = () => {
             <div className="card-body">
               <span className="metric-icon"><i className="fa-solid fa-rotate-left"></i></span>
               <div className="metric-texts">
-                <div className="metric-value">{stats.returnItems}</div>
+                <div className="metric-value">
+                  {typeof stats.returnItems === 'number' 
+                    ? stats.returnItems % 1 === 0 
+                      ? formatNumber(stats.returnItems) 
+                      : formatNumber(stats.returnItems, 3)
+                    : stats.returnItems}
+                </div>
                 <div className="metric-label">Return Items</div>
               </div>
             </div>
@@ -694,7 +768,9 @@ const Dashboard = () => {
               <span className="metric-icon"><i className="fa-solid fa-microchip"></i></span>
               <div className="metric-texts">
                 <div className="metric-value">
-                  {stats.machineSalesCash > 0 ? formatCurrency(stats.machineSalesCash) : 'N/A'}
+                  {stats.machineSalesCash > 0 ? formatCurrency(stats.machineSalesCash) : (
+                    <span className="text-muted" style={{ fontSize: '0.9em' }}>No Sales</span>
+                  )}
                 </div>
                 <div className="metric-label">Machine Sales (If Any)</div>
               </div>
@@ -720,12 +796,21 @@ const Dashboard = () => {
               {topSellingItems.length === 0 ? (
                 <div className="text-muted">No sales data</div>
               ) : (
-                topSellingItems.map((item, index) => (
-                  <div key={index} className="d-flex justify-content-between border-bottom py-2">
-                    <span>{item.name} ({item.qty})</span>
-                    <strong>{formatCurrency(item.value)}</strong>
-                  </div>
-                ))
+                topSellingItems.map((item, index) => {
+                  // Remove item code prefix if present (e.g., "050.Item Name" -> "Item Name")
+                  const displayName = item.name ? item.name.replace(/^\d+\.\s*/, '') : item.code || 'Unknown';
+                  const formattedQty = typeof item.qty === 'number' 
+                    ? item.qty % 1 === 0 
+                      ? item.qty.toLocaleString() 
+                      : parseFloat(item.qty).toFixed(3).replace(/\.?0+$/, '')
+                    : item.qty;
+                  return (
+                    <div key={index} className="d-flex justify-content-between border-bottom py-2">
+                      <span>{displayName} ({formattedQty})</span>
+                      <strong>{formatCurrency(item.value)}</strong>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

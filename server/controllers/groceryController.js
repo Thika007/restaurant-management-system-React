@@ -316,7 +316,8 @@ const updateGroceryRemaining = async (req, res) => {
       const finishedCheck = await pool.request()
         .input('date', sql.Date, date)
         .input('branch', sql.NVarChar, branch)
-        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+        .input('itemType', sql.NVarChar, 'Grocery Item')
+        .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
       
       if (finishedCheck.recordset.length > 0) {
         return res.status(400).json({ success: false, message: 'Grocery batch is already finished. Cannot update remaining quantities.' });
@@ -426,14 +427,14 @@ const updateGroceryRemaining = async (req, res) => {
         
         if (itemResult.recordset.length > 0) {
           const item = itemResult.recordset[0];
-          const today = new Date().toISOString().split('T')[0];
+          const saleDate = date || new Date().toISOString().split('T')[0];
           const totalCash = soldQty * parseFloat(item.price);
           
           await pool.request()
             .input('itemCode', sql.NVarChar, update.itemCode)
             .input('itemName', sql.NVarChar, item.name)
             .input('branch', sql.NVarChar, branch)
-            .input('date', sql.Date, today)
+            .input('date', sql.Date, saleDate)
             .input('soldQty', sql.Decimal(18, 3), soldQty)
             .input('totalCash', sql.Decimal(18, 2), totalCash)
             .query(`
@@ -448,7 +449,8 @@ const updateGroceryRemaining = async (req, res) => {
             `${soldQty} ${item.name} sold at ${branch}`,
             branch,
             activityTimestamp,
-            { itemCode: update.itemCode, itemName: item.name, soldQty, totalCash, date: today }
+            { itemCode: update.itemCode, itemName: item.name, soldQty, totalCash, date: saleDate },
+            new Date(saleDate)
           );
         }
       }
@@ -684,40 +686,16 @@ const checkGroceryFinished = async (req, res) => {
 
     const pool = await getConnection();
     
-    // Check if grocery batch is finished
-    // Note: Using FinishedBatches table - if itemType field exists, filter by it
-    // Otherwise, check if any batch is finished (may conflict with normal items)
-    let query = `
-      SELECT finishedAt 
-      FROM FinishedBatches 
-      WHERE date = @date AND branch = @branch
-    `;
-    
-    // Try to check if itemType column exists and use it if available
-    try {
-      const columnCheck = await pool.request()
-        .query(`
-          SELECT COLUMN_NAME 
-          FROM INFORMATION_SCHEMA.COLUMNS 
-          WHERE TABLE_NAME = 'FinishedBatches' AND COLUMN_NAME = 'itemType'
-        `);
-      
-      if (columnCheck.recordset.length > 0) {
-        query += ' AND itemType = @itemType';
-      }
-    } catch (e) {
-      // Column doesn't exist, use query without itemType filter
-    }
-    
-    const request = pool.request()
+    // Check if grocery batch is finished (always filter by itemType)
+    const result = await pool.request()
       .input('date', sql.Date, date)
-      .input('branch', sql.NVarChar, branch);
-    
-    if (query.includes('@itemType')) {
-      request.input('itemType', sql.NVarChar, 'Grocery Item');
-    }
-    
-    const result = await request.query(query);
+      .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Grocery Item')
+      .query(`
+        SELECT finishedAt 
+        FROM FinishedBatches 
+        WHERE date = @date AND branch = @branch AND itemType = @itemType
+      `);
 
     res.json({ 
       success: true, 
@@ -744,61 +722,23 @@ const finishGroceryBatch = async (req, res) => {
 
     const pool = await getConnection();
     
-    // Check if already finished
-    let checkQuery = 'SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch';
-    let hasItemType = false;
-    
-    // Check if itemType column exists
-    try {
-      const columnCheck = await pool.request()
-        .query(`
-          SELECT COLUMN_NAME 
-          FROM INFORMATION_SCHEMA.COLUMNS 
-          WHERE TABLE_NAME = 'FinishedBatches' AND COLUMN_NAME = 'itemType'
-        `);
-      
-      if (columnCheck.recordset.length > 0) {
-        hasItemType = true;
-        checkQuery += ' AND itemType = @itemType';
-      }
-    } catch (e) {
-      // Column doesn't exist
-    }
-    
-    const checkRequest = pool.request()
+    // Check if already finished for Grocery Items
+    const checkResult = await pool.request()
       .input('date', sql.Date, date)
-      .input('branch', sql.NVarChar, branch);
-    
-    if (hasItemType) {
-      checkRequest.input('itemType', sql.NVarChar, 'Grocery Item');
-    }
-    
-    const checkResult = await checkRequest.query(checkQuery);
+      .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Grocery Item')
+      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
     if (checkResult.recordset.length > 0) {
       return res.status(400).json({ success: false, message: 'Grocery batch is already finished' });
     }
 
-    // Mark batch as finished
-    let insertQuery = 'INSERT INTO FinishedBatches (date, branch, finishedAt';
-    let valuesQuery = 'VALUES (@date, @branch, GETDATE()';
-    
-    if (hasItemType) {
-      insertQuery += ', itemType';
-      valuesQuery += ', @itemType';
-    }
-    
-    insertQuery += ') ' + valuesQuery + ')';
-    
-    const insertRequest = pool.request()
+    // Mark batch as finished for Grocery Items
+    await pool.request()
       .input('date', sql.Date, date)
-      .input('branch', sql.NVarChar, branch);
-    
-    if (hasItemType) {
-      insertRequest.input('itemType', sql.NVarChar, 'Grocery Item');
-    }
-    
-    await insertRequest.query(insertQuery);
+      .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Grocery Item')
+      .query('INSERT INTO FinishedBatches (date, branch, itemType, finishedAt) VALUES (@date, @branch, @itemType, GETDATE())');
 
     // Log activity for grocery batch finish
     const activityTimestamp = new Date();

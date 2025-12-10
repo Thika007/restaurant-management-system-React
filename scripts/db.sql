@@ -226,9 +226,11 @@ BEGIN
     CREATE TABLE [dbo].[FinishedBatches] (
         [date] DATE NOT NULL,
         [branch] NVARCHAR(200) NOT NULL,
+        [itemType] NVARCHAR(50) NOT NULL DEFAULT 'Normal Item',
         [finishedAt] DATETIME DEFAULT GETDATE(),
-        PRIMARY KEY ([date], [branch]),
-        FOREIGN KEY ([branch]) REFERENCES [dbo].[Branches]([name])
+        PRIMARY KEY ([date], [branch], [itemType]),
+        FOREIGN KEY ([branch]) REFERENCES [dbo].[Branches]([name]),
+        CHECK ([itemType] IN ('Normal Item', 'Grocery Item'))
     );
 END
 

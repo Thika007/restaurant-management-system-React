@@ -240,7 +240,7 @@ const Reports = () => {
       
       if (machineSalesRes.data.success) {
         for (const sale of machineSalesRes.data.sales || []) {
-          const saleDate = sale.date ? (typeof sale.date === 'string' ? sale.date : sale.date.toISOString().split('T')[0]) : '';
+          const saleDate = formatDateOnly(sale.date);
           if (itemFilter && sale.machineName !== itemFilter) continue;
           if (itemTypeFilter && 'Machine' !== itemTypeFilter) continue;
           if (reportType === 'item' && (sale.soldQty || 0) <= 0) continue;

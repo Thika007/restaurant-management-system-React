@@ -28,7 +28,8 @@ const getStocks = async (req, res) => {
     const finishedResult = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
-      .query('SELECT finishedAt FROM FinishedBatches WHERE date = @date AND branch = @branch');
+      .input('itemType', sql.NVarChar, 'Normal Item')
+      .query('SELECT finishedAt FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
     const stocks = result.recordset.map(s => ({
       itemCode: s.itemCode,
@@ -69,7 +70,8 @@ const getBatchStatus = async (req, res) => {
     const result = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
-      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+      .input('itemType', sql.NVarChar, 'Normal Item')
+      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
     res.json({ success: true, isFinished: result.recordset.length > 0 });
   } catch (error) {
@@ -88,11 +90,12 @@ const updateStocks = async (req, res) => {
 
     const pool = await getConnection();
 
-    // Check if batch is finished
+    // Check if batch is finished for Normal Items
     const finishedCheck = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
-      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+      .input('itemType', sql.NVarChar, 'Normal Item')
+      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
     if (finishedCheck.recordset.length > 0) {
       return res.status(400).json({ success: false, message: 'Batch is already finished' });
@@ -164,13 +167,25 @@ const finishBatch = async (req, res) => {
     const pool = await getConnection();
     const finishTimestamp = new Date(); // Use current timestamp for accurate activity logging
 
-    // Mark batch as finished (explicitly set finishedAt timestamp)
+    // Check if already finished for Normal Items
+    const checkResult = await pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Normal Item')
+      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
+
+    if (checkResult.recordset.length > 0) {
+      return res.status(400).json({ success: false, message: 'Batch is already finished' });
+    }
+
+    // Mark batch as finished for Normal Items
     await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
+      .input('itemType', sql.NVarChar, 'Normal Item')
       .query(`
-        IF NOT EXISTS (SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch)
-        INSERT INTO FinishedBatches (date, branch, finishedAt) VALUES (@date, @branch, GETDATE())
+        INSERT INTO FinishedBatches (date, branch, itemType, finishedAt) 
+        VALUES (@date, @branch, @itemType, GETDATE())
       `);
 
     // Recalculate sold quantities (don't update updatedAt - we're not modifying stock, just recalculating)
@@ -230,11 +245,12 @@ const updateReturns = async (req, res) => {
 
     const pool = await getConnection();
 
-    // Check if batch is finished
+    // Check if batch is finished for Normal Items
     const finishedCheck = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
-      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch');
+      .input('itemType', sql.NVarChar, 'Normal Item')
+      .query('SELECT * FROM FinishedBatches WHERE date = @date AND branch = @branch AND itemType = @itemType');
 
     if (finishedCheck.recordset.length > 0) {
       return res.status(400).json({ success: false, message: 'Batch is already finished' });
