@@ -360,27 +360,35 @@ const AddReturn = () => {
     const errors = [];
     
     // Process remaining quantities (for sales)
-    Object.keys(groceryRemaining).forEach(itemCode => {
-      const item = items.find(i => i.code === itemCode);
-      const newRemainingValue = groceryRemaining[itemCode];
-      
-      // Skip if empty (user may only want to update returns)
-      if (newRemainingValue === '' || newRemainingValue === null || newRemainingValue === undefined) {
-        return;
-      }
+    // New behavior:
+    // - For every grocery item with stock > 0, if the user leaves Remaining Quantity empty,
+    //   treat it as 0 (meaning all stock is sold for that item).
+    const itemsWithStock = filteredItems.filter(item => getGroceryStockTotal(item.code) > 0);
 
-      const newRemaining = item && item.soldByWeight 
-        ? parseFloat(newRemainingValue) 
-        : parseFloat(newRemainingValue);
-      
+    itemsWithStock.forEach(item => {
+      const itemCode = item.code;
+      const rawValue = groceryRemaining[itemCode];
+
+      // Default empty / missing value to 0 (all sold)
+      const effectiveValue =
+        rawValue === '' || rawValue === null || rawValue === undefined
+          ? 0
+          : rawValue;
+
+      const newRemaining = item.soldByWeight
+        ? parseFloat(effectiveValue)
+        : parseFloat(effectiveValue);
+
       if (!isNaN(newRemaining) && newRemaining >= 0) {
         // Validate newRemaining doesn't exceed total stock
         const currentTotalStock = getGroceryStockTotal(itemCode);
         if (newRemaining > currentTotalStock) {
-          errors.push(`${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock})`);
+          errors.push(
+            `${item?.name || itemCode}: Remaining quantity (${newRemaining}) cannot exceed total stock (${currentTotalStock})`
+          );
           return;
         }
-        
+
         updates.push({ itemCode, newRemaining });
       }
     });
@@ -817,13 +825,17 @@ const AddReturn = () => {
     return filteredItems.reduce((rows, item) => {
       const totalStock = getGroceryStockTotal(item.code);
       if (totalStock <= 0) return rows;
-      const remaining = groceryRemaining[item.code] ?? '';
+      const rawRemaining = groceryRemaining[item.code];
+      const remaining =
+        rawRemaining === '' || rawRemaining === null || rawRemaining === undefined
+          ? 0
+          : rawRemaining;
       const returnQty = groceryReturnQty[item.code] || '';
       rows.push([
         item.name,
         item.category,
         item.soldByWeight ? Number(totalStock).toFixed(3) : Math.round(totalStock),
-        remaining === '' ? '' : remaining,
+        remaining,
         returnQty
       ]);
       return rows;
@@ -1218,7 +1230,7 @@ const AddReturn = () => {
                                 min="0"
                                 max={totalStock}
                                 step={item.soldByWeight ? "0.001" : "1"}
-                                placeholder={item.soldByWeight ? Number(totalStock).toFixed(3) : Math.trunc(totalStock).toString()}
+                                placeholder="0"
                                 disabled={isGroceryFinished}
                               />
                             </td>

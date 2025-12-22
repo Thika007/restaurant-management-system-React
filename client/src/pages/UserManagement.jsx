@@ -73,6 +73,7 @@ const UserManagement = () => {
     'Cash Management',
     'Reports',
     'Expire Tracking',
+    'Stock Tracking',
     'Branch Management',
     'User Management'
   ];

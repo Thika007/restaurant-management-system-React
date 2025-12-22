@@ -36,7 +36,9 @@ const Inventory = () => {
     price: '',
     description: '',
     soldByWeight: false,
-    notifyExpiry: false
+    notifyExpiry: false,
+    minQty: '',
+    maxQty: ''
   });
 
   // Categories for Normal Items
@@ -103,7 +105,9 @@ const Inventory = () => {
       price: '',
       description: '',
       soldByWeight: false,
-      notifyExpiry: false
+      notifyExpiry: false,
+      minQty: '',
+      maxQty: ''
     });
   };
 
@@ -143,6 +147,18 @@ const Inventory = () => {
         }
         itemData.soldByWeight = formData.soldByWeight;
         itemData.notifyExpiry = formData.notifyExpiry;
+        // Add minQty and maxQty if provided
+        if (formData.minQty && formData.minQty !== '') {
+          itemData.minQty = parseFloat(formData.minQty);
+        }
+        if (formData.maxQty && formData.maxQty !== '') {
+          itemData.maxQty = parseFloat(formData.maxQty);
+        }
+        // Validate minQty <= maxQty if both provided
+        if (itemData.minQty != null && itemData.maxQty != null && itemData.minQty > itemData.maxQty) {
+          showWarning('Min QTY cannot be greater than Max QTY.');
+          return;
+        }
       } else if (itemType === 'Machine') {
         if (!itemData.name || !itemData.price || itemData.price <= 0) {
           showWarning('Please fill all required fields for Machine.');
@@ -192,7 +208,9 @@ const Inventory = () => {
         price: item.price.toString(),
         description: '',
         soldByWeight: item.soldByWeight || false,
-        notifyExpiry: item.notifyExpiry || false
+        notifyExpiry: item.notifyExpiry || false,
+        minQty: item.minQty != null ? item.minQty.toString() : '',
+        maxQty: item.maxQty != null ? item.maxQty.toString() : ''
       });
       setItemType('Grocery Item');
       setShowEditGroceryModal(true);
@@ -235,6 +253,18 @@ const Inventory = () => {
         }
         updateData.soldByWeight = formData.soldByWeight;
         updateData.notifyExpiry = formData.notifyExpiry;
+        // Add minQty and maxQty if provided
+        if (formData.minQty && formData.minQty !== '') {
+          updateData.minQty = parseFloat(formData.minQty);
+        }
+        if (formData.maxQty && formData.maxQty !== '') {
+          updateData.maxQty = parseFloat(formData.maxQty);
+        }
+        // Validate minQty <= maxQty if both provided
+        if (updateData.minQty != null && updateData.maxQty != null && updateData.minQty > updateData.maxQty) {
+          showWarning('Min QTY cannot be greater than Max QTY.');
+          return;
+        }
       } else if (editingItem.itemType === 'Machine') {
         if (!updateData.name || !updateData.price || updateData.price <= 0) {
           showWarning('Please fill all required fields.');
@@ -303,7 +333,9 @@ const Inventory = () => {
       price: '',
       description: '',
       soldByWeight: false,
-      notifyExpiry: false
+      notifyExpiry: false,
+      minQty: '',
+      maxQty: ''
     });
     setEditingItem(null);
   };
@@ -661,6 +693,36 @@ const Inventory = () => {
                       <label className="form-check-label">Notify on expiry</label>
                       <div className="form-text">If checked, you will receive notifications 2 days before the expiry date.</div>
                     </div>
+                    <div className="row mb-3">
+                      <div className="col-md-6">
+                        <label className="form-label">Min QTY</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          name="minQty"
+                          value={formData.minQty}
+                          onChange={handleInputChange}
+                          placeholder="Optional"
+                          min="0"
+                          step="0.001"
+                        />
+                        <div className="form-text">Minimum quantity for stock tracking</div>
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">Max QTY</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          name="maxQty"
+                          value={formData.maxQty}
+                          onChange={handleInputChange}
+                          placeholder="Optional"
+                          min="0"
+                          step="0.001"
+                        />
+                        <div className="form-text">Maximum quantity for stock tracking</div>
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -919,6 +981,36 @@ const Inventory = () => {
                   />
                   <label className="form-check-label">Notify on expiry</label>
                   <div className="form-text">If checked, you will receive notifications 2 days before the expiry date.</div>
+                </div>
+                <div className="row mb-3">
+                  <div className="col-md-6">
+                    <label className="form-label">Min QTY</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      name="minQty"
+                      value={formData.minQty}
+                      onChange={handleInputChange}
+                      placeholder="Optional"
+                      min="0"
+                      step="0.001"
+                    />
+                    <div className="form-text">Minimum quantity for stock tracking</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label">Max QTY</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      name="maxQty"
+                      value={formData.maxQty}
+                      onChange={handleInputChange}
+                      placeholder="Optional"
+                      min="0"
+                      step="0.001"
+                    />
+                    <div className="form-text">Maximum quantity for stock tracking</div>
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">

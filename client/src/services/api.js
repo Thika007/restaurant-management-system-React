@@ -171,3 +171,8 @@ export const activitiesAPI = {
   getRecentActivities: (params) => api.get('/activities', { params })
 };
 
+// Stock Tracking API
+export const stockTrackingAPI = {
+  get: (params) => api.get('/stock-tracking', { params })
+};
+

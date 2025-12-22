@@ -11,6 +11,7 @@ import AddReturn from '../pages/AddReturn';
 import CashManagement from '../pages/CashManagement';
 import Reports from '../pages/Reports';
 import ExpireTracking from '../pages/ExpireTracking';
+import StockTracking from '../pages/StockTracking';
 import BranchManagement from '../pages/BranchManagement';
 import UserManagement from '../pages/UserManagement';
 
@@ -486,6 +487,13 @@ const Layout = () => {
                   </NavLink>
                 </li>
               )}
+              {canAccess('Stock Tracking') && (
+                <li className="nav-item">
+                  <NavLink to="/stock-tracking" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+                    <i className="fas fa-warehouse me-2"></i>Stock Tracking
+                  </NavLink>
+                </li>
+              )}
               {canAccess('Branch Management') && (
                 <li className="nav-item">
                   <NavLink to="/branch-management" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
@@ -519,6 +527,14 @@ const Layout = () => {
               element={
                 user?.role === 'admin' || (user?.accesses && user.accesses.includes('Expire Tracking')) 
                   ? <ExpireTracking /> 
+                  : <Navigate to="/dashboard" replace />
+              } 
+            />
+            <Route 
+              path="/stock-tracking" 
+              element={
+                user?.role === 'admin' || (user?.accesses && user.accesses.includes('Stock Tracking')) 
+                  ? <StockTracking /> 
                   : <Navigate to="/dashboard" replace />
               } 
             />

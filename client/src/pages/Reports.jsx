@@ -143,7 +143,7 @@ const Reports = () => {
   };
 
   const generateSalesReport = async () => {
-    const head = ['Date', 'Branch', reportType === 'branch' ? 'Group' : 'Item Name', 'Type', 'Returned', 'Sold', 'Sales (Rs.)'];
+    const head = ['Date', 'Branch', reportType === 'branch' ? 'Group' : 'Item Name', 'Type', 'Sold', 'Sales (Rs.)'];
     setTableHead(head);
     
     const body = [];
@@ -183,7 +183,6 @@ const Reports = () => {
                   branch,
                   groupLabel,
                   'Normal Item',
-                  stock.returned || 0,
                   soldQty,
                   `Rs ${revenue.toFixed(2)}`
                 ]);
@@ -220,7 +219,6 @@ const Reports = () => {
             sale.branch,
             label,
             'Grocery Item',
-            0, // Returns handled separately
             sale.soldQty || 0,
             `Rs ${revenue.toFixed(2)}`
           ]);
@@ -254,7 +252,6 @@ const Reports = () => {
             sale.branch,
             label,
             'Machine',
-            '-',
             sale.soldQty || 0,
             `Rs ${revenue.toFixed(2)}`
           ]);
@@ -267,7 +264,7 @@ const Reports = () => {
     // Add total row
     body.push({
       isTotal: true,
-      cells: ['', '', '', '', '', 'Total Revenue', `Rs ${totalRevenue.toFixed(2)}`]
+      cells: ['', '', '', '', 'Total Revenue', `Rs ${totalRevenue.toFixed(2)}`]
     });
 
     setTableBody(body);
@@ -424,7 +421,7 @@ const Reports = () => {
   };
 
   const generateAddedItemsReport = async () => {
-    const head = ['Date', 'Branch', 'Item Name', 'Type', 'Added', 'Returned', 'Transferred', 'Available'];
+    const head = ['Date', 'Branch', 'Item Name', 'Type', 'Added', 'Returned', 'Transferred'];
     setTableHead(head);
     
     const body = [];
@@ -466,8 +463,7 @@ const Reports = () => {
                       'Normal Item',
                       added,
                       returned,
-                      transferred,
-                      available
+                      transferred
                     ]);
                   }
                 }
@@ -642,7 +638,6 @@ const Reports = () => {
           const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
           const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
           const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
-          const availableDisplay = item.soldByWeight ? Number(availableQty).toFixed(3) : Math.round(availableQty);
           
           body.push([
             formatDateOnly(row.date),
@@ -651,16 +646,13 @@ const Reports = () => {
             'Grocery Item',
             addedDisplay,
             returnedDisplay,
-            transferredDisplay,
-            availableDisplay
+            transferredDisplay
           ]);
         } catch (error) {
           // If can't fetch available, still show the row with calculated available
-          const calculatedAvailable = Math.max(0, (row.added || 0) - (row.returned || 0) - (row.transferred || 0));
           const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
           const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
           const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
-          const availableDisplay = item.soldByWeight ? Number(calculatedAvailable).toFixed(3) : Math.round(calculatedAvailable);
           
           body.push([
             formatDateOnly(row.date),
@@ -669,19 +661,18 @@ const Reports = () => {
             'Grocery Item',
             addedDisplay,
             returnedDisplay,
-            transferredDisplay,
-            availableDisplay
+            transferredDisplay
           ]);
         }
       }
 
     } catch (error) {
       console.error('Error generating added items report:', error);
-      body.push({ cells: ['Error loading added items data.'], colSpan: 8 });
+      body.push({ cells: ['Error loading added items data.'], colSpan: 7 });
     }
 
     if (body.length === 0) {
-      body.push({ cells: ['No added items data available.'], colSpan: 8 });
+      body.push({ cells: ['No added items data available.'], colSpan: 7 });
     }
 
     setTableBody(body);
