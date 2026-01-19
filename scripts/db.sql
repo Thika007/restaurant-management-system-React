@@ -145,6 +145,36 @@ BEGIN
     );
 END
 
+-- GroceryDailyRemaining table (for automatic date-wise remaining stock snapshots)
+-- Drop table if exists (in case it was created previously)
+IF EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[GroceryDailyRemaining]') AND type in (N'U'))
+BEGIN
+    DROP TABLE [dbo].[GroceryDailyRemaining];
+END
+
+-- Create GroceryDailyRemaining table
+IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[GroceryDailyRemaining]') AND type in (N'U'))
+BEGIN
+    CREATE TABLE [dbo].[GroceryDailyRemaining] (
+        [id] INT IDENTITY(1,1) PRIMARY KEY,
+        [itemCode] NVARCHAR(50) NOT NULL,
+        [itemName] NVARCHAR(200) NOT NULL,
+        [branch] NVARCHAR(200) NOT NULL,
+        [date] DATE NOT NULL,
+        [remainingQty] DECIMAL(18, 3) NOT NULL,
+        [recordedBy] NVARCHAR(50) NULL,
+        [notes] NVARCHAR(500) NULL,
+        [createdAt] DATETIME DEFAULT GETDATE(),
+        [updatedAt] DATETIME DEFAULT GETDATE(),
+        FOREIGN KEY ([itemCode]) REFERENCES [dbo].[Items]([code]),
+        FOREIGN KEY ([branch]) REFERENCES [dbo].[Branches]([name]),
+        UNIQUE ([itemCode], [branch], [date])  -- One record per item per branch per date
+    );
+    
+    CREATE INDEX IX_GroceryDailyRemaining_Date ON GroceryDailyRemaining(date DESC);
+    CREATE INDEX IX_GroceryDailyRemaining_ItemBranch ON GroceryDailyRemaining(itemCode, branch);
+END
+
 -- MachineBatches table
 IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[MachineBatches]') AND type in (N'U'))
 BEGIN
@@ -289,6 +319,7 @@ DATABASE STRUCTURE SUMMARY:
    - Items (itemType = 'Grocery Item') → Stock in GroceryStocks table (batch-based)
    - Sales in GrocerySales table
    - Returns in GroceryReturns table
+   - Daily Remaining snapshots in GroceryDailyRemaining table (auto-recorded)
 
 4. Machines Tracking:
    - Items (itemType = 'Machine') → Batches in MachineBatches table

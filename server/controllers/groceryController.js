@@ -51,6 +51,39 @@ const addGroceryStock = async (req, res) => {
     const batchId = generateBatchId();
     const stockDate = date || new Date().toISOString().split('T')[0];
 
+    // Prevent entering a later date when previous Grocery Item date (with data) is not finished.
+    const prevUnfinished = await pool.request()
+      .input('date', sql.Date, stockDate)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        WITH prev AS (
+          SELECT MAX(addedDate) AS prevDate
+          FROM GroceryStocks
+          WHERE branch = @branch
+            AND addedDate IS NOT NULL
+            AND addedDate < @date
+        )
+        SELECT p.prevDate
+        FROM prev p
+        WHERE p.prevDate IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM FinishedBatches fb
+            WHERE fb.[date] = p.prevDate AND fb.branch = @branch AND fb.itemType = 'Grocery Item'
+          );
+      `);
+    if (prevUnfinished.recordset?.[0]?.prevDate) {
+      const d = new Date(prevUnfinished.recordset[0].prevDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Please finish the previous day first.\n\nBranch: ${branch}\nPending date: ${d}\n\nGo to Add Return Stock page and click Finish for ${d}. Then you can enter data for ${stockDate}.`
+      });
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:54',message:'addGroceryStock - before insert',data:{itemCode,branch,quantity,expiryDate,date:stockDate,id,batchId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+
     await pool.request()
       .input('id', sql.NVarChar, id)
       .input('batchId', sql.NVarChar, batchId)
@@ -65,6 +98,10 @@ const addGroceryStock = async (req, res) => {
         INSERT INTO GroceryStocks (id, batchId, itemCode, branch, quantity, remaining, expiryDate, date, addedDate)
         VALUES (@id, @batchId, @itemCode, @branch, @quantity, @remaining, @expiryDate, @date, @addedDate)
       `);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:67',message:'addGroceryStock - after insert',data:{itemCode,branch,quantity,date:stockDate,id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
 
     // Get item name for activity logging
     let itemName = itemCode;
@@ -220,13 +257,42 @@ const getGroceryReturns = async (req, res) => {
 
 const recordGroceryReturn = async (req, res) => {
   try {
-    const { itemCode, itemName, branch, date, returnedQty, reason } = req.body;
+    const { itemCode, itemName, branch, date, returnedQty, reason, recordedBy } = req.body;
     
     if (!itemCode || !branch || !date || !returnedQty) {
       return res.status(400).json({ success: false, message: 'Required fields missing' });
     }
 
     const pool = await getConnection();
+
+    // Prevent entering a later date when previous Grocery Item date (with data) is not finished.
+    const prevUnfinished = await pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        WITH prev AS (
+          SELECT MAX(addedDate) AS prevDate
+          FROM GroceryStocks
+          WHERE branch = @branch
+            AND addedDate IS NOT NULL
+            AND addedDate < @date
+        )
+        SELECT p.prevDate
+        FROM prev p
+        WHERE p.prevDate IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM FinishedBatches fb
+            WHERE fb.[date] = p.prevDate AND fb.branch = @branch AND fb.itemType = 'Grocery Item'
+          );
+      `);
+    if (prevUnfinished.recordset?.[0]?.prevDate) {
+      const d = new Date(prevUnfinished.recordset[0].prevDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Please finish the previous day first.\n\nBranch: ${branch}\nPending date: ${d}\n\nGo to Add Return Stock page and click Finish for ${d}. Then you can enter data for ${date}.`
+      });
+    }
 
     // Reduce remaining stock (FIFO)
     // Get all stocks including those with remaining = 0 (to handle edge cases)
@@ -294,6 +360,23 @@ const recordGroceryReturn = async (req, res) => {
       new Date(date) // realDate: the actual return date
     );
 
+    // Auto-record remaining stock snapshot (after processing return)
+    try {
+      // Get recordedBy from request body, or try to extract from headers/auth
+      let userRecordedBy = recordedBy;
+      if (!userRecordedBy) {
+        // Try to get from req.user if middleware sets it
+        const user = req.user || {};
+        userRecordedBy = user.id || user.username || null;
+      }
+      const notes = `Auto-recorded from return: ${returnedQty} ${reason || 'waste'}`;
+      
+      await recordRemainingSnapshot(pool, itemCode, branch, date, userRecordedBy, notes);
+    } catch (snapshotError) {
+      // Log error but don't fail the main operation
+      console.error(`Error recording snapshot for ${itemCode}:`, snapshotError);
+    }
+
     res.json({ success: true, message: 'Grocery return recorded successfully' });
   } catch (error) {
     console.error('Record grocery return error:', error);
@@ -303,13 +386,43 @@ const recordGroceryReturn = async (req, res) => {
 
 const updateGroceryRemaining = async (req, res) => {
   try {
-    const { branch, updates, date } = req.body; // updates: [{ itemCode, newRemaining }]
+    const { branch, updates, date, recordedBy } = req.body; // updates: [{ itemCode, newRemaining }]
     
     if (!branch || !updates || !Array.isArray(updates)) {
       return res.status(400).json({ success: false, message: 'Invalid request data' });
     }
 
     const pool = await getConnection();
+    const saleDate = date || new Date().toISOString().split('T')[0];
+
+    // Prevent entering a later date when previous Grocery Item date (with data) is not finished.
+    const prevUnfinished = await pool.request()
+      .input('date', sql.Date, saleDate)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        WITH prev AS (
+          SELECT MAX(addedDate) AS prevDate
+          FROM GroceryStocks
+          WHERE branch = @branch
+            AND addedDate IS NOT NULL
+            AND addedDate < @date
+        )
+        SELECT p.prevDate
+        FROM prev p
+        WHERE p.prevDate IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM FinishedBatches fb
+            WHERE fb.[date] = p.prevDate AND fb.branch = @branch AND fb.itemType = 'Grocery Item'
+          );
+      `);
+    if (prevUnfinished.recordset?.[0]?.prevDate) {
+      const d = new Date(prevUnfinished.recordset[0].prevDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Please finish the previous day first.\n\nBranch: ${branch}\nPending date: ${d}\n\nGo to Add Return Stock page and click Finish for ${d}. Then you can enter data for ${saleDate}.`
+      });
+    }
     
     // Check if grocery batch is finished for this date and branch
     if (date) {
@@ -330,15 +443,62 @@ const updateGroceryRemaining = async (req, res) => {
         .input('itemCode', sql.NVarChar, update.itemCode)
         .input('branch', sql.NVarChar, branch)
         .query(`
-          SELECT id, remaining, quantity 
+          SELECT id, remaining, quantity, addedDate, date
           FROM GroceryStocks 
           WHERE itemCode = @itemCode AND branch = @branch
           ORDER BY expiryDate ASC, addedDate ASC
         `);
 
-      const totalRemaining = stocks.recordset.reduce((sum, s) => sum + parseFloat(s.remaining || s.quantity), 0);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:346',message:'updateGroceryRemaining - stocks before update',data:{itemCode:update.itemCode,branch,date,stocksCount:stocks.recordset.length,stocks:stocks.recordset.map(s=>({id:s.id,remaining:parseFloat((s.remaining ?? s.quantity) ?? 0),quantity:parseFloat(s.quantity ?? 0),addedDate:s.addedDate?.toISOString(),date:s.date?.toISOString()}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
+      // IMPORTANT: remaining can be 0; do not use `||` fallback (0 is falsy).
+      const totalRemaining = stocks.recordset.reduce((sum, s) => sum + parseFloat((s.remaining ?? s.quantity) ?? 0), 0);
       const newRemaining = parseFloat(update.newRemaining);
-      const soldQty = totalRemaining - newRemaining;
+      
+      // Get the sale date
+      const saleDate = date || new Date().toISOString().split('T')[0];
+      
+      // Get stock added on the current date (to calculate what was added today)
+      const stockAddedToday = stocks.recordset
+        .filter(s => {
+          const addedDate = s.addedDate ? new Date(s.addedDate).toISOString().split('T')[0] : null;
+          return addedDate === saleDate;
+        })
+        .reduce((sum, s) => sum + parseFloat(s.quantity || 0), 0);
+      
+      // Get previous remaining stock (from before today's additions)
+      const previousRemaining = stocks.recordset
+        .filter(s => {
+          const addedDate = s.addedDate ? new Date(s.addedDate).toISOString().split('T')[0] : null;
+          return addedDate !== saleDate;
+        })
+        // IMPORTANT: remaining can be 0; do not use `||` fallback (0 is falsy).
+        .reduce((sum, s) => sum + parseFloat((s.remaining ?? s.quantity) ?? 0), 0);
+      
+      // Calculate sold quantity correctly:
+      // soldQty = (previousRemaining + stockAddedToday) - newRemaining
+      // This represents: (what was available at start of day + what was added today) - what remains = what was sold
+      // Example: Day 1: previous=0, stockAddedToday=37, newRemaining=0 → sold = (0 + 37) - 0 = 37
+      // Example: Day 2: previous=0, stockAddedToday=180, newRemaining=4 → sold = (0 + 180) - 4 = 176
+      const totalAvailable = previousRemaining + stockAddedToday;
+      const soldQty = Math.max(0, totalAvailable - newRemaining);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:390',message:'updateGroceryRemaining - sold quantity calculation (fixed)',data:{itemCode:update.itemCode,branch,date:saleDate,totalRemaining,newRemaining,stockAddedToday,previousRemaining,totalAvailable,soldQty},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
+      // Check for existing GrocerySales records for this date/item/branch
+      const existingSales = await pool.request()
+        .input('itemCode', sql.NVarChar, update.itemCode)
+        .input('branch', sql.NVarChar, branch)
+        .input('date', sql.Date, saleDate)
+        .query('SELECT soldQty, totalCash FROM GrocerySales WHERE itemCode = @itemCode AND branch = @branch AND date = @date');
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:365',message:'updateGroceryRemaining - existing sales check',data:{itemCode:update.itemCode,branch,date:saleDate,existingSalesCount:existingSales.recordset.length,existingSales:existingSales.recordset.map(s=>({soldQty:parseFloat(s.soldQty),totalCash:parseFloat(s.totalCash)}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
 
       if (soldQty < 0) {
         return res.status(400).json({ 
@@ -355,7 +515,8 @@ const updateGroceryRemaining = async (req, res) => {
 
       // Proportional allocation across batches
       const allocations = stocks.recordset.map(s => {
-        const current = parseFloat(s.remaining || s.quantity || 0);
+        // IMPORTANT: remaining can be 0; do not use `||` fallback (0 is falsy).
+        const current = parseFloat((s.remaining ?? s.quantity) ?? 0);
         const proportion = totalRemaining > 0 ? (current / totalRemaining) : 0;
         const alloc = Math.max(0, Math.min(current, newRemaining * proportion));
         return { id: s.id, current, alloc };
@@ -430,6 +591,11 @@ const updateGroceryRemaining = async (req, res) => {
           const saleDate = date || new Date().toISOString().split('T')[0];
           const totalCash = soldQty * parseFloat(item.price);
           
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:467',message:'updateGroceryRemaining - recording sale (MERGE)',data:{itemCode:update.itemCode,itemName:item.name,branch,date:saleDate,soldQty,totalCash,existingSalesCount:existingSales.recordset.length},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
+          
+          // Use MERGE to update existing record or insert new one (prevents duplicates)
           await pool.request()
             .input('itemCode', sql.NVarChar, update.itemCode)
             .input('itemName', sql.NVarChar, item.name)
@@ -438,8 +604,20 @@ const updateGroceryRemaining = async (req, res) => {
             .input('soldQty', sql.Decimal(18, 3), soldQty)
             .input('totalCash', sql.Decimal(18, 2), totalCash)
             .query(`
-              INSERT INTO GrocerySales (itemCode, itemName, branch, date, soldQty, totalCash)
-              VALUES (@itemCode, @itemName, @branch, @date, @soldQty, @totalCash)
+              MERGE GrocerySales AS target
+              USING (SELECT @itemCode AS itemCode, @branch AS branch, @date AS date) AS source
+              ON target.itemCode = source.itemCode 
+                 AND target.branch = source.branch 
+                 AND target.date = source.date
+              WHEN MATCHED THEN
+                UPDATE SET 
+                  soldQty = @soldQty,
+                  itemName = @itemName,
+                  totalCash = @totalCash,
+                  timestamp = GETDATE()
+              WHEN NOT MATCHED THEN
+                INSERT (itemCode, itemName, branch, date, soldQty, totalCash)
+                VALUES (@itemCode, @itemName, @branch, @date, @soldQty, @totalCash);
             `);
 
           // Log activity for grocery sale (when remaining is updated)
@@ -453,6 +631,24 @@ const updateGroceryRemaining = async (req, res) => {
             new Date(saleDate)
           );
         }
+      }
+
+      // Auto-record remaining stock snapshot (after updating batches)
+      try {
+        // Get recordedBy from request body, or try to extract from headers/auth
+        let userRecordedBy = recordedBy;
+        if (!userRecordedBy) {
+          // Try to get from req.user if middleware sets it
+          const user = req.user || {};
+          userRecordedBy = user.id || user.username || null;
+        }
+        const recordDate = date || new Date().toISOString().split('T')[0];
+        const notes = `Auto-recorded from remaining update`;
+        
+        await recordRemainingSnapshot(pool, update.itemCode, branch, recordDate, userRecordedBy, notes);
+      } catch (snapshotError) {
+        // Log error but don't fail the main operation
+        console.error(`Error recording snapshot for ${update.itemCode}:`, snapshotError);
       }
     }
 
@@ -712,6 +908,101 @@ const checkGroceryFinished = async (req, res) => {
   }
 };
 
+const getDailyRemaining = async (req, res) => {
+  try {
+    const { branch, date, dateFrom, dateTo, itemCode } = req.query;
+    const pool = await getConnection();
+    
+    let query = `
+      SELECT 
+        dr.*,
+        i.category,
+        i.price,
+        i.soldByWeight
+      FROM GroceryDailyRemaining dr
+      INNER JOIN Items i ON dr.itemCode = i.code
+      WHERE 1=1
+    `;
+    const request = pool.request();
+    
+    if (branch) {
+      query += ' AND dr.branch = @branch';
+      request.input('branch', sql.NVarChar, branch);
+    }
+    if (date) {
+      query += ' AND dr.date = @date';
+      request.input('date', sql.Date, date);
+    }
+    if (dateFrom) {
+      query += ' AND dr.date >= @dateFrom';
+      request.input('dateFrom', sql.Date, dateFrom);
+    }
+    if (dateTo) {
+      query += ' AND dr.date <= @dateTo';
+      request.input('dateTo', sql.Date, dateTo);
+    }
+    if (itemCode) {
+      query += ' AND dr.itemCode = @itemCode';
+      request.input('itemCode', sql.NVarChar, itemCode);
+    }
+    
+    query += ' ORDER BY dr.date DESC, dr.itemName ASC';
+    const result = await request.query(query);
+    
+    res.json({ success: true, records: result.recordset });
+  } catch (error) {
+    console.error('Get daily remaining error:', error);
+    res.status(500).json({ success: false, message: 'Error fetching daily remaining records' });
+  }
+};
+
+const getDailyRemainingByItem = async (req, res) => {
+  try {
+    const { itemCode } = req.params;
+    const { branch, dateFrom, dateTo } = req.query;
+    
+    if (!itemCode) {
+      return res.status(400).json({ success: false, message: 'Item code is required' });
+    }
+
+    const pool = await getConnection();
+    
+    let query = `
+      SELECT 
+        dr.*,
+        i.category,
+        i.price,
+        i.soldByWeight
+      FROM GroceryDailyRemaining dr
+      INNER JOIN Items i ON dr.itemCode = i.code
+      WHERE dr.itemCode = @itemCode
+    `;
+    const request = pool.request();
+    request.input('itemCode', sql.NVarChar, itemCode);
+    
+    if (branch) {
+      query += ' AND dr.branch = @branch';
+      request.input('branch', sql.NVarChar, branch);
+    }
+    if (dateFrom) {
+      query += ' AND dr.date >= @dateFrom';
+      request.input('dateFrom', sql.Date, dateFrom);
+    }
+    if (dateTo) {
+      query += ' AND dr.date <= @dateTo';
+      request.input('dateTo', sql.Date, dateTo);
+    }
+    
+    query += ' ORDER BY dr.date ASC';
+    const result = await request.query(query);
+    
+    res.json({ success: true, records: result.recordset });
+  } catch (error) {
+    console.error('Get daily remaining by item error:', error);
+    res.status(500).json({ success: false, message: 'Error fetching daily remaining records for item' });
+  }
+};
+
 const finishGroceryBatch = async (req, res) => {
   try {
     const { date, branch } = req.body;
@@ -758,6 +1049,68 @@ const finishGroceryBatch = async (req, res) => {
   }
 };
 
+// Helper function to record remaining stock snapshot
+const recordRemainingSnapshot = async (pool, itemCode, branch, date, recordedBy, notes) => {
+  try {
+    // Calculate total remaining from GroceryStocks
+    const stocksResult = await pool.request()
+      .input('itemCode', sql.NVarChar, itemCode)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        SELECT SUM(remaining) as totalRemaining
+        FROM GroceryStocks
+        WHERE itemCode = @itemCode AND branch = @branch
+      `);
+
+    const totalRemaining = parseFloat(stocksResult.recordset[0]?.totalRemaining || 0);
+
+    // Get itemName from Items table
+    const itemResult = await pool.request()
+      .input('itemCode', sql.NVarChar, itemCode)
+      .query('SELECT name FROM Items WHERE code = @itemCode');
+
+    if (itemResult.recordset.length === 0) {
+      console.error(`Item ${itemCode} not found for snapshot recording`);
+      return false;
+    }
+
+    const itemName = itemResult.recordset[0].name;
+    const recordDate = date || new Date().toISOString().split('T')[0];
+
+    // MERGE into GroceryDailyRemaining
+    await pool.request()
+      .input('itemCode', sql.NVarChar, itemCode)
+      .input('itemName', sql.NVarChar, itemName)
+      .input('branch', sql.NVarChar, branch)
+      .input('date', sql.Date, recordDate)
+      .input('remainingQty', sql.Decimal(18, 3), totalRemaining)
+      .input('recordedBy', sql.NVarChar, recordedBy)
+      .input('notes', sql.NVarChar, notes || null)
+      .query(`
+        MERGE GroceryDailyRemaining AS target
+        USING (SELECT @itemCode AS itemCode, @branch AS branch, @date AS date) AS source
+        ON target.itemCode = source.itemCode 
+           AND target.branch = source.branch 
+           AND target.date = source.date
+        WHEN MATCHED THEN
+          UPDATE SET 
+            remainingQty = @remainingQty,
+            itemName = @itemName,
+            recordedBy = @recordedBy,
+            notes = @notes,
+            updatedAt = GETDATE()
+        WHEN NOT MATCHED THEN
+          INSERT (itemCode, itemName, branch, date, remainingQty, recordedBy, notes)
+          VALUES (@itemCode, @itemName, @branch, @date, @remainingQty, @recordedBy, @notes);
+      `);
+
+    return true;
+  } catch (error) {
+    console.error(`Error recording remaining snapshot for ${itemCode}:`, error);
+    return false;
+  }
+};
+
 module.exports = {
   getGroceryStocks,
   getGroceryStocksByDate,
@@ -768,6 +1121,8 @@ module.exports = {
   recordGroceryReturn,
   updateGroceryRemaining,
   checkGroceryFinished,
-  finishGroceryBatch
+  finishGroceryBatch,
+  getDailyRemaining,
+  getDailyRemainingByItem
 };
 

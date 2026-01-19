@@ -118,6 +118,100 @@ const StockTracking = () => {
     return num.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 3 });
   };
 
+  // Helper function to interpolate between two hex colors
+  const interpolateColor = (color1, color2, ratio) => {
+    // Ensure ratio is between 0 and 1
+    ratio = Math.max(0, Math.min(1, ratio));
+    
+    // Convert hex to RGB
+    const hex1 = color1.replace('#', '');
+    const hex2 = color2.replace('#', '');
+    
+    const r1 = parseInt(hex1.substring(0, 2), 16);
+    const g1 = parseInt(hex1.substring(2, 4), 16);
+    const b1 = parseInt(hex1.substring(4, 6), 16);
+    
+    const r2 = parseInt(hex2.substring(0, 2), 16);
+    const g2 = parseInt(hex2.substring(2, 4), 16);
+    const b2 = parseInt(hex2.substring(4, 6), 16);
+    
+    // Interpolate
+    const r = Math.round(r1 + (r2 - r1) * ratio);
+    const g = Math.round(g1 + (g2 - g1) * ratio);
+    const b = Math.round(b1 + (b2 - b1) * ratio);
+    
+    // Convert back to hex
+    const toHex = (n) => {
+      const hex = n.toString(16);
+      return hex.length === 1 ? '0' + hex : hex;
+    };
+    
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  };
+
+  // Calculate progress percentage based on min/max/current
+  const calculateProgress = (item) => {
+    const { minQty, maxQty, currentQty } = item;
+    
+    // If min/max not set, return 0
+    if (minQty == null || maxQty == null) {
+      return 0;
+    }
+    
+    const min = parseFloat(minQty);
+    const max = parseFloat(maxQty);
+    const current = parseFloat(currentQty || 0);
+    
+    // Handle edge case where min equals max
+    if (min === max) {
+      return current >= min ? 100 : 0;
+    }
+    
+    // Calculate percentage: (current - min) / (max - min) * 100
+    let percentage = ((current - min) / (max - min)) * 100;
+    
+    // Clamp between 0 and 100 for display purposes
+    percentage = Math.max(0, Math.min(100, percentage));
+    
+    return percentage;
+  };
+
+  // Get progress bar color with gradient (red → yellow → green)
+  const getProgressBarColor = (percentage, minQty, maxQty, currentQty) => {
+    // If min/max not available, return gray
+    if (minQty == null || maxQty == null) {
+      return '#6c757d'; // Bootstrap gray
+    }
+    
+    const min = parseFloat(minQty);
+    const max = parseFloat(maxQty);
+    const current = parseFloat(currentQty || 0);
+    
+    // Define color stops
+    const red = '#dc3545';    // Bootstrap danger (red)
+    const yellow = '#ffc107'; // Bootstrap warning (yellow)
+    const green = '#28a745';  // Bootstrap success (green)
+    
+    // Handle edge cases
+    if (current <= min || percentage <= 0) {
+      return red;
+    }
+    if (current >= max || percentage >= 100) {
+      return green;
+    }
+    
+    // Gradient: red → yellow (0-50%), yellow → green (50-100%)
+    if (percentage <= 50) {
+      // Red to Yellow
+      const ratio = percentage / 50;
+      return interpolateColor(red, yellow, ratio);
+    } else {
+      // Yellow to Green
+      const ratio = (percentage - 50) / 50;
+      return interpolateColor(yellow, green, ratio);
+    }
+  };
+
   if (loading && stockData.length === 0 && !selectedBranch) {
     return <div className="text-center p-5">Loading...</div>;
   }
@@ -220,24 +314,62 @@ const StockTracking = () => {
                     <th>Item Name</th>
                     <th>Category</th>
                     <th>Current Quantity</th>
+                    <th>Stock Level</th>
                     <th>Status</th>
                     <th>Branch</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stockData.map((item) => (
-                    <tr key={item.code}>
-                      <td>{item.name}</td>
-                      <td>{item.category}</td>
-                      <td>{formatQuantity(item.currentQty)}</td>
-                      <td>
-                        <span className={`badge ${getStatusBadgeClass(item.status)}`}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td>{item.branch}</td>
-                    </tr>
-                  ))}
+                  {stockData.map((item) => {
+                    const progressPercentage = calculateProgress(item);
+                    const progressColor = getProgressBarColor(
+                      progressPercentage,
+                      item.minQty,
+                      item.maxQty,
+                      item.currentQty
+                    );
+                    const hasMinMax = item.minQty != null && item.maxQty != null;
+                    
+                    return (
+                      <tr key={item.code}>
+                        <td>{item.name}</td>
+                        <td>{item.category}</td>
+                        <td>{formatQuantity(item.currentQty)}</td>
+                        <td>
+                          <div className="progress" style={{ height: '25px', minWidth: '150px' }}>
+                            <div
+                              className="progress-bar"
+                              role="progressbar"
+                              style={{
+                                width: `${Math.max(0, Math.min(100, progressPercentage))}%`,
+                                backgroundColor: progressColor,
+                                transition: 'all 0.3s ease'
+                              }}
+                              aria-valuenow={progressPercentage}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                            >
+                              {progressPercentage > 5 && (
+                                <small className="text-white fw-bold">
+                                  {progressPercentage.toFixed(1)}%
+                                </small>
+                              )}
+                            </div>
+                          </div>
+                          <div className="small text-muted mt-1">
+                            Min: {item.minQty != null ? formatQuantity(item.minQty) : 'N/A'} | 
+                            Max: {item.maxQty != null ? formatQuantity(item.maxQty) : 'N/A'}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${getStatusBadgeClass(item.status)}`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td>{item.branch}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

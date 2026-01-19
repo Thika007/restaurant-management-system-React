@@ -21,6 +21,7 @@ const AddStock = () => {
   // Filter and selection states
   const [selectedBranch, setSelectedBranch] = useState('');
   const [stockDate, setStockDate] = useState(new Date().toISOString().split('T')[0]);
+  const [machineDate, setMachineDate] = useState(new Date().toISOString().split('T')[0]);
   const [filterCategory, setFilterCategory] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -39,6 +40,32 @@ const AddStock = () => {
   const [machineFormData, setMachineFormData] = useState({ startValue: '', date: '' });
   const [machineStatusMessage, setMachineStatusMessage] = useState('');
   const [machineStatusClass, setMachineStatusClass] = useState('text-info');
+  const [finishLockWarning, setFinishLockWarning] = useState('');
+
+  const toMessageString = (msg, fallback) =>
+    typeof msg === 'string' && msg.trim() ? msg : fallback;
+
+  const isFinishLockMessage = (msg) =>
+    typeof msg === 'string' &&
+    (msg.includes('Please finish the previous day first') || msg.trim().startsWith('⚠️'));
+
+  const showApiMessage = (message, fallbackType = 'error') => {
+    const msg = toMessageString(message, 'Something went wrong');
+    const isFinishLock = isFinishLockMessage(msg);
+    if (isFinishLock) {
+      setFinishLockWarning(msg);
+      return showWarning(msg);
+    }
+    setFinishLockWarning('');
+    if (fallbackType === 'warning') return showWarning(msg);
+    if (fallbackType === 'info') return showInfo(msg);
+    return showError(msg);
+  };
+
+  // Clear inline warning when user changes context
+  useEffect(() => {
+    setFinishLockWarning('');
+  }, [selectedBranch, stockDate, machineDate, selectedType]);
   
   // Lock body scroll when machine modal is open
   useEffect(() => {
@@ -75,7 +102,7 @@ const AddStock = () => {
     } else if (selectedBranch && selectedType === 'Machine') {
       loadMachineBatches();
     }
-  }, [selectedBranch, stockDate, selectedType]);
+  }, [selectedBranch, stockDate, machineDate, selectedType]);
 
   const loadInitialData = async () => {
     try {
@@ -219,6 +246,7 @@ const AddStock = () => {
       });
 
       if (response.data.success) {
+        setFinishLockWarning('');
         const itemCount = itemsToUpdate.length;
         const message = `Normal items stock updated successfully! ${itemCount} item(s) added to ${selectedBranch} for ${stockDate}.`;
         setSuccessMessage(message);
@@ -232,8 +260,11 @@ const AddStock = () => {
         loadNormalStocks();
       }
     } catch (error) {
-      const message = error.response?.data?.message || 'Failed to update stocks';
-      showError(message);
+      const message = toMessageString(
+        error?.response?.data?.message,
+        error?.message || 'Failed to update stocks'
+      );
+      showApiMessage(message, 'error');
       console.error('Update stocks error:', error);
     }
   };
@@ -265,6 +296,7 @@ const AddStock = () => {
       });
 
       if (response.data.success) {
+        setFinishLockWarning('');
         const displayQuantity = selectedGroceryItem.soldByWeight 
           ? Number(quantity).toFixed(3)
           : Math.trunc(quantity);
@@ -278,8 +310,11 @@ const AddStock = () => {
         await loadGroceryStocks();
       }
     } catch (error) {
-      const message = error.response?.data?.message || 'Failed to add grocery stock';
-      showError(message);
+      const message = toMessageString(
+        error?.response?.data?.message,
+        error?.message || 'Failed to add grocery stock'
+      );
+      showApiMessage(message, 'error');
       console.error('Add grocery stock error:', error);
     }
   };
@@ -288,28 +323,29 @@ const AddStock = () => {
   const handleShowMachineModal = async (machine) => {
     setSelectedMachine(machine);
     
-    // Always default to today's date - user can change it if needed
-    const todayDate = getCurrentDate();
+    // Use the selected date from the filter section
+    const selectedDate = machineDate || getCurrentDate();
     
-    // Check for active batch
+    // Check for active batch for the selected date
     try {
       const response = await machinesAPI.getBatches({ 
         branch: selectedBranch, 
         machineCode: machine.code,
-        status: 'active' 
+        status: 'active',
+        date: selectedDate
       });
 
       if (response.data.success && response.data.batches.length > 0) {
         const activeBatch = response.data.batches[0];
         setMachineFormData({
           startValue: activeBatch.startValue.toString(),
-          date: todayDate
+          date: selectedDate
         });
         setMachineBatches(response.data.batches);
         setMachineStatusMessage('Active Batch Exists');
         setMachineStatusClass('text-info');
       } else {
-        // Try to get last completed batch end value
+        // Try to get last completed batch end value (for any date, not just selected)
         const completedRes = await machinesAPI.getBatches({ 
           branch: selectedBranch,
           machineCode: machine.code,
@@ -328,19 +364,19 @@ const AddStock = () => {
         
         setMachineFormData({
           startValue: lastEndValue,
-          date: todayDate
+          date: selectedDate
         });
         setMachineBatches([]);
         setMachineStatusMessage('Ready to Start');
         setMachineStatusClass('text-success');
       }
       
-      // Check for completed batch on the default date (today)
-      checkMachineDateValidation(machine.code, todayDate);
+      // Check for completed batch on the selected date
+      checkMachineDateValidation(machine.code, selectedDate);
     } catch (error) {
       setMachineFormData({
         startValue: '',
-        date: todayDate
+        date: selectedDate
       });
       setMachineBatches([]);
       setMachineStatusMessage('Ready to Start');
@@ -439,38 +475,59 @@ const AddStock = () => {
     }
 
     try {
-      // Check if there's a completed batch that was ended on the selected date
-      const completedRes = await machinesAPI.getBatches({
-        branch: selectedBranch,
-        machineCode: selectedMachine.code,
-        status: 'completed'
-      });
-
-      if (completedRes.data.success && completedRes.data.batches.length > 0) {
-        // Check if any completed batch was ended on the selected date
-        const selectedDate = new Date(machineFormData.date);
-        const endedOnSelectedDate = completedRes.data.batches.find(batch => {
-          if (!batch.endTime) return false;
-          const endDate = new Date(batch.endTime);
-          // Compare dates (ignoring time)
-          return endDate.toISOString().split('T')[0] === selectedDate.toISOString().split('T')[0];
+      // Check if there's a completed batch for the selected date
+      // The backend checks by comparing the batch's date field, not endTime
+      try {
+        const completedRes = await machinesAPI.getBatches({
+          branch: selectedBranch,
+          machineCode: selectedMachine.code,
+          status: 'completed',
+          date: machineFormData.date
         });
 
-        if (endedOnSelectedDate) {
-          const endTime = endedOnSelectedDate.endTime 
-            ? new Date(endedOnSelectedDate.endTime).toLocaleString() 
-            : 'previously';
-          showError(`⚠️ WARNING: This machine batch has already been completed for date ${machineFormData.date} and branch ${selectedBranch}.\n\nThe batch was finished on ${endTime}.\n\nYou cannot start a new batch for the same date and branch. Please select a different date or branch.`);
-          return;
+        if (completedRes?.data?.success && completedRes.data.batches?.length > 0) {
+          // Check if any completed batch exists for the selected date
+          const normalizedSelectedDate = machineFormData.date.split('T')[0];
+          const batchForSelectedDate = completedRes.data.batches.find(batch => {
+            let batchDate = batch.date;
+            if (batchDate) {
+              if (batchDate instanceof Date) {
+                batchDate = batchDate.toISOString().split('T')[0];
+              } else if (typeof batchDate === 'string') {
+                batchDate = batchDate.split('T')[0];
+              }
+            }
+            return batchDate === normalizedSelectedDate;
+          });
+
+          if (batchForSelectedDate) {
+            const endTime = batchForSelectedDate.endTime 
+              ? new Date(batchForSelectedDate.endTime).toLocaleString() 
+              : 'previously';
+            showError(`⚠️ WARNING: This machine batch has already been completed for date ${machineFormData.date} and branch ${selectedBranch}.\n\nThe batch was finished on ${endTime}.\n\nYou cannot start a new batch for the same date and branch. Please select a different date or branch.`);
+            return;
+          }
         }
+      } catch (checkError) {
+        // If checking for completed batches fails, log but continue
+        // The backend will validate anyway
+        console.warn('Error checking for completed batches:', checkError);
       }
 
       // Check if active batch exists for this specific machine and branch
-      const checkRes = await machinesAPI.getBatches({
-        branch: selectedBranch,
-        machineCode: selectedMachine.code,
-        status: 'active'
-      });
+      let checkRes;
+      try {
+        checkRes = await machinesAPI.getBatches({
+          branch: selectedBranch,
+          machineCode: selectedMachine.code,
+          status: 'active'
+        });
+      } catch (activeCheckError) {
+        // If checking for active batches fails, assume no active batch and proceed
+        // The backend will validate anyway
+        console.warn('Error checking for active batches:', activeCheckError);
+        checkRes = { data: { success: true, batches: [] } };
+      }
 
       if (checkRes.data.success && checkRes.data.batches.length > 0) {
         // Verify the batch belongs to the correct machine and branch
@@ -490,6 +547,7 @@ const AddStock = () => {
           });
 
           if (updateRes.data.success) {
+          setFinishLockWarning('');
             const message = `Machine batch updated successfully! "${selectedMachine.name}" - Start value: ${startValue}, Branch: ${selectedBranch}.`;
             setSuccessMessage(message);
             setShowSuccessModal(true);
@@ -511,6 +569,7 @@ const AddStock = () => {
         });
 
         if (response.data.success) {
+          setFinishLockWarning('');
           const message = `Machine batch started successfully! "${selectedMachine.name}" - Start value: ${startValue}, Branch: ${selectedBranch}.`;
           setSuccessMessage(message);
           setShowSuccessModal(true);
@@ -521,8 +580,11 @@ const AddStock = () => {
         }
       }
     } catch (error) {
-      const message = error.response?.data?.message || 'Failed to start/update batch';
-      showError(message);
+      const message = toMessageString(
+        error?.response?.data?.message,
+        error?.message || 'Failed to start/update batch'
+      );
+      showApiMessage(message, 'error');
       console.error('Start machine batch error:', error);
     }
   };
@@ -554,9 +616,26 @@ const AddStock = () => {
   };
 
   // Check machine status (active, ended, or not started)
-  const getMachineStatus = (machineCode) => {
-    // Find all batches for this machine (should only be one active at most)
-    const batches = machineBatches.filter(b => b.machineCode === machineCode);
+  // If date is provided, check status for that specific date
+  const getMachineStatus = (machineCode, date = null) => {
+    // If date is provided, filter batches for that specific date
+    let batches = machineBatches.filter(b => b.machineCode === machineCode);
+    
+    if (date) {
+      // Normalize the date for comparison
+      const normalizedDate = date.split('T')[0];
+      batches = batches.filter(batch => {
+        let batchDate = batch.date;
+        if (batchDate) {
+          if (batchDate instanceof Date) {
+            batchDate = batchDate.toISOString().split('T')[0];
+          } else if (typeof batchDate === 'string') {
+            batchDate = batchDate.split('T')[0];
+          }
+        }
+        return batchDate === normalizedDate;
+      });
+    }
     
     // First check for active batch
     const activeBatch = batches.find(b => b.status === 'active');
@@ -573,10 +652,10 @@ const AddStock = () => {
         const dateB = b.endTime ? new Date(b.endTime) : new Date(b.date);
         return dateB - dateA; // Most recent first
       });
-      return { status: 'Ended', batch: sorted[0] };
+      return { status: 'Completed', batch: sorted[0] };
     }
     
-    // No batch found
+    // No batch found for the specified date
     return { status: 'Not Started', batch: null };
   };
 
@@ -762,6 +841,17 @@ const AddStock = () => {
                 />
               </div>
             )}
+            {selectedType === 'Machine' && (
+              <div className="col-md-3">
+                <input
+                  type="date"
+                  className="form-control"
+                  value={machineDate}
+                  max={getCurrentDate()}
+                  onChange={(e) => setMachineDate(e.target.value)}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -803,12 +893,19 @@ const AddStock = () => {
               </div>
             ) : (
               <>
-                <button
-                  className="btn btn-primary mb-3"
-                  onClick={handleUpdateStocks}
-                >
-                  Update Stocks
-                </button>
+                <div className="d-flex align-items-center mb-3 gap-3">
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleUpdateStocks}
+                  >
+                    Update Stocks
+                  </button>
+                  {finishLockWarning ? (
+                    <div className="text-warning fw-bold" style={{ whiteSpace: 'pre-line' }}>
+                      {finishLockWarning}
+                    </div>
+                  ) : null}
+                </div>
                 <table className="table table-hover">
                   <thead>
                     <tr>
@@ -940,10 +1037,6 @@ const AddStock = () => {
       {/* Machine Stock Table */}
       {selectedType === 'Machine' && (
         <div>
-          <div className="alert alert-info mb-3">
-            <i className="fas fa-info-circle me-2"></i>
-            Select a machine to start a new batch. Machines track sales based on start and end values.
-          </div>
           {!selectedBranch ? (
             <div className="text-center text-warning p-3">
               Please select a branch first.
@@ -982,10 +1075,10 @@ const AddStock = () => {
                     </tr>
                   ) : (
                     filteredItems.map(machine => {
-                      const { status } = getMachineStatus(machine.code);
+                      const { status } = getMachineStatus(machine.code, machineDate);
                       const statusClass = 
                         status === 'Active' ? 'text-success fw-bold' :
-                        status === 'Ended' ? 'text-secondary' :
+                        status === 'Completed' ? 'text-secondary' :
                         '';
                       return (
                         <tr key={machine.code}>
@@ -1093,13 +1186,20 @@ const AddStock = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleAddGroceryStock}
-                >
-                  OK
-                </button>
+                <div className="d-flex align-items-center gap-3">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleAddGroceryStock}
+                  >
+                    OK
+                  </button>
+                  {finishLockWarning ? (
+                    <div className="text-warning fw-bold" style={{ whiteSpace: 'pre-line' }}>
+                      {finishLockWarning}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -1198,23 +1298,30 @@ const AddStock = () => {
               >
                 Cancel
               </button>
-              {hasActiveBatch ? (
-                <button
-                  type="button"
-                  className="btn btn-warning"
-                  onClick={handleStartMachineBatch}
-                >
-                  Update Start Value
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleStartMachineBatch}
-                >
-                  Start Machine
-                </button>
-              )}
+              <div className="d-flex align-items-center gap-3">
+                {hasActiveBatch ? (
+                  <button
+                    type="button"
+                    className="btn btn-warning"
+                    onClick={handleStartMachineBatch}
+                  >
+                    Update Start Value
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleStartMachineBatch}
+                  >
+                    Start Machine
+                  </button>
+                )}
+                {finishLockWarning ? (
+                  <div className="text-warning fw-bold" style={{ whiteSpace: 'pre-line' }}>
+                    {finishLockWarning}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

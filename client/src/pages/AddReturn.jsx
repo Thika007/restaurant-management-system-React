@@ -36,6 +36,19 @@ const AddReturn = () => {
   // Machine states
   const [machineEndValues, setMachineEndValues] = useState({});
 
+  const toMessageString = (msg, fallback) =>
+    typeof msg === 'string' && msg.trim() ? msg : fallback;
+
+  const showApiPopup = async (message, fallbackType = 'error') => {
+    const msg = toMessageString(message, 'Something went wrong');
+    const isFinishLock =
+      typeof msg === 'string' &&
+      (msg.includes('Please finish the previous day first') || msg.trim().startsWith('⚠️'));
+    const type = isFinishLock ? 'warning' : fallbackType;
+    const title = type === 'warning' ? '⚠️ Warning' : '❌ Error';
+    await showPopup(title, msg, type);
+  };
+
   // Get available branches based on user role
   const getAvailableBranches = () => {
     if (!user) return [];
@@ -450,19 +463,26 @@ const AddReturn = () => {
     }
 
     try {
+      // Get user info for recordedBy
+      const recordedBy = user?.id || user?.username || null;
+
       // Update remaining quantities first (records sales)
       if (updates.length > 0) {
         await groceryAPI.updateRemaining({
           branch: selectedBranch,
           date: returnDate,
-          updates: updates
+          updates: updates,
+          recordedBy: recordedBy
         });
       }
 
       // Record returns
       if (itemsToReturn.length > 0) {
         for (const returnItem of itemsToReturn) {
-          await groceryAPI.recordReturn(returnItem);
+          await groceryAPI.recordReturn({
+            ...returnItem,
+            recordedBy: recordedBy
+          });
         }
       }
 
@@ -481,8 +501,11 @@ const AddReturn = () => {
       
       await showPopup('✅ Success', `Grocery stock updated!\n\nBranch: ${selectedBranch}\nDate: ${returnDate || today}${updateMsg}${returnMsg}\n\nStock quantities have been updated.`, 'success');
     } catch (error) {
-      const message = error.response?.data?.message || 'Failed to update grocery stock';
-      await showPopup('❌ Error', message, 'error');
+      const message = toMessageString(
+        error?.response?.data?.message,
+        error?.message || 'Failed to update grocery stock'
+      );
+      await showApiPopup(message, 'error');
       console.error('Update grocery error:', error);
     }
   };
@@ -594,9 +617,13 @@ const AddReturn = () => {
     }
 
     try {
+      // Get user info for recordedBy
+      const recordedBy = user?.id || user?.username || null;
+
       const response = await groceryAPI.updateRemaining({
         branch: selectedBranch,
-        updates: updates
+        updates: updates,
+        recordedBy: recordedBy
       });
 
       if (response.data.success) {
@@ -686,9 +713,15 @@ const AddReturn = () => {
     }
 
     try {
+      // Get user info for recordedBy
+      const recordedBy = user?.id || user?.username || null;
+
       // Process each return - backend will update remaining stock in database
       for (const returnItem of itemsToReturn) {
-        await groceryAPI.recordReturn(returnItem);
+        await groceryAPI.recordReturn({
+          ...returnItem,
+          recordedBy: recordedBy
+        });
       }
 
       // Small delay to ensure database transactions complete

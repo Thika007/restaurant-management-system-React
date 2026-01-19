@@ -57,6 +57,35 @@ const startBatch = async (req, res) => {
 
     const pool = await getConnection();
 
+    // Prevent entering a later date when previous Machine date (with data) is not finished.
+    // We mark Machine days as finished automatically when the last batch for that date+branch is completed.
+    const prevUnfinished = await pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        WITH prev AS (
+          SELECT MAX([date]) AS prevDate
+          FROM MachineBatches
+          WHERE branch = @branch
+            AND [date] < @date
+        )
+        SELECT p.prevDate
+        FROM prev p
+        WHERE p.prevDate IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM FinishedBatches fb
+            WHERE fb.[date] = p.prevDate AND fb.branch = @branch AND fb.itemType = 'Machine'
+          );
+      `);
+    if (prevUnfinished.recordset?.[0]?.prevDate) {
+      const d = new Date(prevUnfinished.recordset[0].prevDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Please finish the previous day first.\n\nBranch: ${branch}\nPending date: ${d}\n\nComplete all machine batches for ${d} in Add Return Stock page. Then you can start a batch for ${date}.`
+      });
+    }
+
     // Check for existing active batch
     const existingCheck = await pool.request()
       .input('machineCode', sql.NVarChar, machineCode)
@@ -218,6 +247,28 @@ const finishBatch = async (req, res) => {
         INSERT INTO MachineSales (machineCode, machineName, date, branch, startValue, endValue, soldQty, unitPrice, totalCash)
         VALUES (@machineCode, @machineName, @date, @branch, @startValue, @endValue, @soldQty, @unitPrice, @totalCash)
       `);
+
+    // If this was the last active machine batch for the day+branch, mark the Machine day finished
+    // so users can enter next-day data (date-wise locking).
+    const remainingActive = await pool.request()
+      .input('branch', sql.NVarChar, batch.branch)
+      .input('date', sql.Date, batch.date)
+      .input('status', sql.NVarChar, 'active')
+      .query(`SELECT COUNT(1) AS cnt FROM MachineBatches WHERE branch = @branch AND [date] = @date AND status = @status`);
+    const activeCount = parseInt(remainingActive.recordset?.[0]?.cnt || 0, 10);
+    if (activeCount === 0) {
+      await pool.request()
+        .input('date', sql.Date, batch.date)
+        .input('branch', sql.NVarChar, batch.branch)
+        .input('itemType', sql.NVarChar, 'Machine')
+        .query(`
+          IF NOT EXISTS (
+            SELECT 1 FROM FinishedBatches WHERE [date] = @date AND branch = @branch AND itemType = @itemType
+          )
+          INSERT INTO FinishedBatches ([date], branch, itemType, finishedAt)
+          VALUES (@date, @branch, @itemType, GETDATE());
+        `);
+    }
 
     res.json({ success: true, message: 'Batch completed successfully', soldQty, totalCash });
   } catch (error) {

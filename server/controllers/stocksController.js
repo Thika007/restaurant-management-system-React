@@ -90,6 +90,37 @@ const updateStocks = async (req, res) => {
 
     const pool = await getConnection();
 
+    // Prevent entering a future date when previous date (with data) is not finished.
+    // Rule: If there is any previous Normal Item date for this branch with stock data,
+    // that date must be finished in Add Return before allowing a later date.
+    const prevUnfinished = await pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        WITH prev AS (
+          SELECT MAX([date]) AS prevDate
+          FROM Stocks
+          WHERE branch = @branch
+            AND [date] < @date
+            AND (ISNULL(added,0) > 0 OR ISNULL(returned,0) > 0 OR ISNULL(transferred,0) > 0)
+        )
+        SELECT p.prevDate
+        FROM prev p
+        WHERE p.prevDate IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM FinishedBatches fb
+            WHERE fb.[date] = p.prevDate AND fb.branch = @branch AND fb.itemType = 'Normal Item'
+          );
+      `);
+    if (prevUnfinished.recordset?.[0]?.prevDate) {
+      const d = new Date(prevUnfinished.recordset[0].prevDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Please finish the previous day first.\n\nBranch: ${branch}\nPending date: ${d}\n\nGo to Add Return Stock page and click Finish for ${d}. Then you can enter data for ${date}.`
+      });
+    }
+
     // Check if batch is finished for Normal Items
     const finishedCheck = await pool.request()
       .input('date', sql.Date, date)
@@ -244,6 +275,35 @@ const updateReturns = async (req, res) => {
     }
 
     const pool = await getConnection();
+
+    // Prevent entering a later date when previous Normal Item date (with data) is not finished.
+    const prevUnfinished = await pool.request()
+      .input('date', sql.Date, date)
+      .input('branch', sql.NVarChar, branch)
+      .query(`
+        WITH prev AS (
+          SELECT MAX([date]) AS prevDate
+          FROM Stocks
+          WHERE branch = @branch
+            AND [date] < @date
+            AND (ISNULL(added,0) > 0 OR ISNULL(returned,0) > 0 OR ISNULL(transferred,0) > 0)
+        )
+        SELECT p.prevDate
+        FROM prev p
+        WHERE p.prevDate IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM FinishedBatches fb
+            WHERE fb.[date] = p.prevDate AND fb.branch = @branch AND fb.itemType = 'Normal Item'
+          );
+      `);
+    if (prevUnfinished.recordset?.[0]?.prevDate) {
+      const d = new Date(prevUnfinished.recordset[0].prevDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Please finish the previous day first.\n\nBranch: ${branch}\nPending date: ${d}\n\nFinish ${d} in Add Return Stock page (Normal Items). Then you can enter data for ${date}.`
+      });
+    }
 
     // Check if batch is finished for Normal Items
     const finishedCheck = await pool.request()

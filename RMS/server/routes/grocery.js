@@ -12,6 +12,8 @@ router.post('/returns', groceryController.recordGroceryReturn);
 router.put('/stocks/remaining', groceryController.updateGroceryRemaining);
 router.get('/check-finished', groceryController.checkGroceryFinished);
 router.post('/finish-batch', groceryController.finishGroceryBatch);
+router.get('/daily-remaining', groceryController.getDailyRemaining);
+router.get('/daily-remaining/item/:itemCode', groceryController.getDailyRemainingByItem);
 
 module.exports = router;
 

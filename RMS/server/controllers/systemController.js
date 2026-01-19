@@ -31,28 +31,31 @@ const clearTransactionData = async (req, res) => {
     // 3. GroceryReturns - Grocery item returns/waste (Dashboard, Reports)
     await pool.request().query('DELETE FROM GroceryReturns');
     
-    // 4. GroceryStocks - Grocery stock batches with expiry dates (Dashboard stock values, Expire Tracking)
+    // 4. GroceryDailyRemaining - Daily remaining stock snapshots (auto-recorded)
+    await pool.request().query('DELETE FROM GroceryDailyRemaining');
+    
+    // 5. GroceryStocks - Grocery stock batches with expiry dates (Dashboard stock values, Expire Tracking)
     await pool.request().query('DELETE FROM GroceryStocks');
     
-    // 5. MachineSales - Machine sales records (Dashboard, Reports)
+    // 6. MachineSales - Machine sales records (Dashboard, Reports)
     await pool.request().query('DELETE FROM MachineSales');
     
-    // 6. MachineBatches - Machine batch tracking (Dashboard)
+    // 7. MachineBatches - Machine batch tracking (Dashboard)
     await pool.request().query('DELETE FROM MachineBatches');
     
-    // 7. CashEntries - Cash reconciliation entries (Dashboard)
+    // 8. CashEntries - Cash reconciliation entries (Dashboard)
     await pool.request().query('DELETE FROM CashEntries');
     
-    // 8. TransferHistory - Internal transfer records (Dashboard activities)
+    // 9. TransferHistory - Internal transfer records (Dashboard activities)
     await pool.request().query('DELETE FROM TransferHistory');
     
-    // 9. FinishedBatches - Finished batch markers (Reports filtering)
+    // 10. FinishedBatches - Finished batch markers (Reports filtering)
     await pool.request().query('DELETE FROM FinishedBatches');
     
-    // 10. Notifications - System notifications (Dashboard)
+    // 11. Notifications - System notifications (Dashboard)
     await pool.request().query('DELETE FROM Notifications');
     
-    // 11. RecentActivities - Recent activity logs (Dashboard Recent Activity table)
+    // 12. RecentActivities - Recent activity logs (Dashboard Recent Activity table)
     await pool.request().query('DELETE FROM RecentActivities');
 
     res.json({ 

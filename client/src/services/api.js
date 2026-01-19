@@ -123,7 +123,9 @@ export const groceryAPI = {
   recordReturn: (data) => api.post('/grocery/returns', data),
   updateRemaining: (data) => api.put('/grocery/stocks/remaining', data),
   checkFinished: (params) => api.get('/grocery/check-finished', { params }),
-  finishBatch: (data) => api.post('/grocery/finish-batch', data)
+  finishBatch: (data) => api.post('/grocery/finish-batch', data),
+  getDailyRemaining: (params) => api.get('/grocery/daily-remaining', { params }),
+  getDailyRemainingByItem: (itemCode, params) => api.get(`/grocery/daily-remaining/item/${itemCode}`, { params })
 };
 
 // Machines API
