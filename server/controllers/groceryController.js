@@ -294,8 +294,7 @@ const recordGroceryReturn = async (req, res) => {
       });
     }
 
-    // Reduce remaining stock (FIFO)
-    // Get all stocks including those with remaining = 0 (to handle edge cases)
+    // BUG-09 fix: validate total available BEFORE deducting (prevent race condition)
     const stocks = await pool.request()
       .input('itemCode', sql.NVarChar, itemCode)
       .input('branch', sql.NVarChar, branch)
@@ -306,17 +305,24 @@ const recordGroceryReturn = async (req, res) => {
         ORDER BY expiryDate ASC, addedDate ASC
       `);
 
-    let remainingToReturn = parseFloat(returnedQty);
-    
-    // Only process stocks with remaining > 0
     const stocksWithRemaining = stocks.recordset.filter(s => parseFloat(s.remaining || 0) > 0);
+    const totalAvailable = stocksWithRemaining.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
+
+    // Validate BEFORE any deduction
+    if (parseFloat(returnedQty) > totalAvailable + 0.001) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot return ${returnedQty}. Only ${totalAvailable.toFixed(3)} available stock.`
+      });
+    }
+
+    let remainingToReturn = parseFloat(returnedQty);
     
     for (const stock of stocksWithRemaining) {
       if (remainingToReturn <= 0) break;
       const currentRemaining = parseFloat(stock.remaining || 0);
       const deduct = Math.min(currentRemaining, remainingToReturn);
       
-      // Update remaining (can become 0)
       const newRemaining = Math.max(0, currentRemaining - deduct);
       
       await pool.request()
@@ -326,14 +332,7 @@ const recordGroceryReturn = async (req, res) => {
       
       remainingToReturn -= deduct;
     }
-    
-    // Validate that we had enough stock to return
-    if (remainingToReturn > 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Cannot return ${returnedQty}. Only ${parseFloat(returnedQty) - remainingToReturn} available stock.` 
-      });
-    }
+
 
     // Record return
     await pool.request()
@@ -485,9 +484,8 @@ const updateGroceryRemaining = async (req, res) => {
       const totalAvailable = previousRemaining + stockAddedToday;
       const soldQty = Math.max(0, totalAvailable - newRemaining);
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:390',message:'updateGroceryRemaining - sold quantity calculation (fixed)',data:{itemCode:update.itemCode,branch,date:saleDate,totalRemaining,newRemaining,stockAddedToday,previousRemaining,totalAvailable,soldQty},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
+
+
 
       // Check for existing GrocerySales records for this date/item/branch
       const existingSales = await pool.request()
@@ -496,9 +494,8 @@ const updateGroceryRemaining = async (req, res) => {
         .input('date', sql.Date, saleDate)
         .query('SELECT soldQty, totalCash FROM GrocerySales WHERE itemCode = @itemCode AND branch = @branch AND date = @date');
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:365',message:'updateGroceryRemaining - existing sales check',data:{itemCode:update.itemCode,branch,date:saleDate,existingSalesCount:existingSales.recordset.length,existingSales:existingSales.recordset.map(s=>({soldQty:parseFloat(s.soldQty),totalCash:parseFloat(s.totalCash)}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
+
+
 
       if (soldQty < 0) {
         return res.status(400).json({ 
@@ -582,18 +579,29 @@ const updateGroceryRemaining = async (req, res) => {
 
       // Record sale if soldQty > 0
       if (soldQty > 0) {
+        const saleDate = date || new Date().toISOString().split('T')[0];
+        // BUG-04 fix: use historical price from ItemPriceHistory for the sale date
         const itemResult = await pool.request()
           .input('itemCode', sql.NVarChar, update.itemCode)
-          .query('SELECT name, price FROM Items WHERE code = @itemCode');
+          .input('saleDate', sql.Date, saleDate)
+          .query(`
+            SELECT i.name,
+                   COALESCE(
+                     (SELECT TOP 1 ph.price FROM ItemPriceHistory ph
+                      WHERE ph.itemCode = i.code AND ph.effectiveFrom <= @saleDate
+                      ORDER BY ph.effectiveFrom DESC),
+                     i.price
+                   ) as price
+            FROM Items i WHERE i.code = @itemCode
+          `);
         
         if (itemResult.recordset.length > 0) {
           const item = itemResult.recordset[0];
-          const saleDate = date || new Date().toISOString().split('T')[0];
           const totalCash = soldQty * parseFloat(item.price);
+
           
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/1b65bd69-1ca0-48a7-b561-8c48eafc8744',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'groceryController.js:467',message:'updateGroceryRemaining - recording sale (MERGE)',data:{itemCode:update.itemCode,itemName:item.name,branch,date:saleDate,soldQty,totalCash,existingSalesCount:existingSales.recordset.length},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
-          // #endregion
+
+
           
           // Use MERGE to update existing record or insert new one (prevents duplicates)
           await pool.request()

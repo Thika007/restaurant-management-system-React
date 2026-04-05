@@ -106,11 +106,13 @@ export const itemsAPI = {
 // Stocks API
 export const stocksAPI = {
   get: (params) => api.get('/stocks', { params }),
+  getRange: (params) => api.get('/stocks/range', { params }), // Batch: all stocks for date range
   getBatchStatus: (params) => api.get('/stocks/batch-status', { params }),
   update: (data) => api.post('/stocks/update', data),
   finishBatch: (data) => api.post('/stocks/finish-batch', data),
   updateReturns: (data) => api.post('/stocks/update-returns', data)
 };
+
 
 // Grocery API
 export const groceryAPI = {

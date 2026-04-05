@@ -46,17 +46,8 @@ const createActivity = async (type, message, branch, timestamp, metadata = null,
 const getRecentActivities = async (req, res) => {
   try {
     const { branch, dateFrom, dateTo, limit = 100 } = req.query;
-    console.log('Getting recent activities with params:', { branch, dateFrom, dateTo, limit }); // Debug log
     
     const pool = await getConnection();
-    
-    // First, check total count of activities in database (for debugging)
-    try {
-      const countResult = await pool.request().query('SELECT COUNT(*) as total FROM RecentActivities');
-      console.log(`Total activities in database: ${countResult.recordset[0]?.total || 0}`);
-    } catch (countError) {
-      console.error('Error counting activities:', countError);
-    }
     
     const limitValue = parseInt(limit) || 100;
     let query = `
@@ -67,14 +58,11 @@ const getRecentActivities = async (req, res) => {
     `;
     const request = pool.request();
     
-    // Only filter by branch if a specific branch is selected (not "All Branches" or empty)
-    // When "All Branches" is selected or no branch filter, show all activities (including NULL branches)
     if (branch && branch !== 'All Branches' && branch !== '' && branch !== null) {
       query += ' AND branch = @branch';
       request.input('branch', sql.NVarChar, branch);
     }
     
-    // Make date filtering optional - only apply if dates are provided
     if (dateFrom) {
       query += ' AND timestamp >= @dateFrom';
       try {
@@ -83,9 +71,7 @@ const getRecentActivities = async (req, res) => {
           dateFromObj.setHours(0, 0, 0, 0);
           request.input('dateFrom', sql.DateTime, dateFromObj);
         }
-      } catch (err) {
-        console.error('Error parsing dateFrom:', err);
-      }
+      } catch (err) {}
     }
     
     if (dateTo) {
@@ -93,21 +79,15 @@ const getRecentActivities = async (req, res) => {
       try {
         const dateToObj = new Date(dateTo);
         if (!isNaN(dateToObj.getTime())) {
-          // Add end of day to dateTo
           dateToObj.setHours(23, 59, 59, 999);
           request.input('dateTo', sql.DateTime, dateToObj);
         }
-      } catch (err) {
-        console.error('Error parsing dateTo:', err);
-      }
+      } catch (err) {}
     }
     
     query += ' ORDER BY timestamp DESC';
     
-    console.log('Executing query:', query); // Debug log
     const result = await request.query(query);
-    
-    console.log(`Found ${result.recordset.length} activities`); // Debug log
     
     const activities = result.recordset.map(activity => {
       try {
@@ -126,7 +106,7 @@ const getRecentActivities = async (req, res) => {
             activity.realDate instanceof Date 
               ? activity.realDate.toISOString().split('T')[0]
               : (typeof activity.realDate === 'string' 
-                  ? activity.realDate.split('T')[0] // Already in YYYY-MM-DD format
+                  ? activity.realDate.split('T')[0]
                   : new Date(activity.realDate).toISOString().split('T')[0])
           ) : null,
           metadata: activity.metadata ? (typeof activity.metadata === 'string' ? JSON.parse(activity.metadata) : activity.metadata) : null,
@@ -135,17 +115,14 @@ const getRecentActivities = async (req, res) => {
             : (activity.createdAt ? new Date(activity.createdAt).toISOString() : null)
         };
       } catch (parseError) {
-        console.error('Error parsing activity:', parseError, activity);
         return null;
       }
     }).filter(activity => activity !== null);
     
-    console.log(`Returning ${activities.length} parsed activities`); // Debug log
     res.json({ success: true, activities });
   } catch (error) {
-    console.error('Get recent activities error:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({ success: false, message: 'Error fetching recent activities', error: error.message });
+    console.error('Get recent activities error:', error.message);
+    res.status(500).json({ success: false, message: 'Error fetching recent activities' });
   }
 };
 
@@ -153,5 +130,3 @@ module.exports = {
   getRecentActivities,
   createActivity
 };
-
-

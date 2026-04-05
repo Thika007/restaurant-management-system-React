@@ -5,10 +5,10 @@ const getTransfers = async (req, res) => {
   try {
     const { branch, dateFrom, dateTo } = req.query;
     const pool = await getConnection();
-    
+
     let query = 'SELECT * FROM TransferHistory WHERE 1=1';
     const request = pool.request();
-    
+
     if (branch) {
       query += ' AND (senderBranch = @branch OR receiverBranch = @branch)';
       request.input('branch', sql.NVarChar, branch);
@@ -21,15 +21,15 @@ const getTransfers = async (req, res) => {
       query += ' AND date <= @dateTo';
       request.input('dateTo', sql.Date, dateTo);
     }
-    
+
     query += ' ORDER BY processedAt DESC';
     const result = await request.query(query);
-    
+
     const transfers = result.recordset.map(t => ({
       ...t,
       items: JSON.parse(t.items)
     }));
-    
+
     res.json({ success: true, transfers });
   } catch (error) {
     console.error('Get transfers error:', error);
@@ -40,7 +40,7 @@ const getTransfers = async (req, res) => {
 const createTransfer = async (req, res) => {
   try {
     const { date, senderBranch, receiverBranch, itemType, items, processedBy } = req.body;
-    
+
     if (!date || !senderBranch || !receiverBranch || !itemType || !items || !Array.isArray(items)) {
       return res.status(400).json({ success: false, message: 'Invalid request data' });
     }
@@ -86,7 +86,7 @@ const createTransfer = async (req, res) => {
           .query(`
             UPDATE Stocks 
             SET transferred = transferred + @quantity,
-                sold = (added - returned - transferred),
+                sold = ISNULL(added, 0) - ISNULL(returned, 0) - (ISNULL(transferred, 0) + @quantity),
                 updatedAt = GETDATE()
             WHERE date = @date AND branch = @branch AND itemCode = @itemCode
           `);
@@ -102,10 +102,12 @@ const createTransfer = async (req, res) => {
             USING (SELECT @date AS date, @branch AS branch, @itemCode AS itemCode, @quantity AS quantity) AS source
             ON target.date = source.date AND target.branch = source.branch AND target.itemCode = source.itemCode
             WHEN MATCHED THEN
-              UPDATE SET added = added + source.quantity, updatedAt = GETDATE()
+              UPDATE SET added = added + source.quantity, 
+                         sold = ISNULL(added, 0) + source.quantity - ISNULL(returned, 0) - ISNULL(transferred, 0), 
+                         updatedAt = GETDATE()
             WHEN NOT MATCHED THEN
               INSERT (date, branch, itemCode, added, returned, transferred, sold)
-              VALUES (source.date, source.branch, source.itemCode, source.quantity, 0, 0, 0);
+              VALUES (source.date, source.branch, source.itemCode, source.quantity, 0, 0, source.quantity);
           `);
       }
     } else if (itemType === 'Grocery Item') {
@@ -128,7 +130,7 @@ const createTransfer = async (req, res) => {
           if (remainingToTransfer <= 0) break;
 
           const transferQty = Math.min(parseFloat(stock.remaining), remainingToTransfer);
-          
+
           // Reduce sender
           await pool.request()
             .input('id', sql.NVarChar, stock.id)
@@ -176,11 +178,11 @@ const createTransfer = async (req, res) => {
 
     // Log activities for transfers
     const activityTimestamp = new Date();
-    
+
     // Get item names for better activity messages
     const itemCodes = items.map(i => i.itemCode);
     const itemsMap = {};
-    
+
     // Fetch item names - use individual queries for each item code (safe and simple)
     if (itemCodes.length > 0) {
       for (const code of itemCodes) {
@@ -188,7 +190,7 @@ const createTransfer = async (req, res) => {
           const itemResult = await pool.request()
             .input('code', sql.NVarChar, code)
             .query('SELECT code, name FROM Items WHERE code = @code');
-          
+
           if (itemResult.recordset.length > 0) {
             itemsMap[code] = itemResult.recordset[0].name;
           }
@@ -200,20 +202,20 @@ const createTransfer = async (req, res) => {
     for (const item of items) {
       const itemName = itemsMap[item.itemCode] || item.itemCode;
       const quantity = item.quantity;
-      
+
       // Log activity on sender branch (items sent out)
       await createActivity(
         'transfer',
         `${quantity} ${itemName} transferred from ${senderBranch} to ${receiverBranch}`,
         senderBranch,
         activityTimestamp,
-        { 
-          itemCode: item.itemCode, 
-          itemName, 
-          quantity, 
-          senderBranch, 
-          receiverBranch, 
-          itemType, 
+        {
+          itemCode: item.itemCode,
+          itemName,
+          quantity,
+          senderBranch,
+          receiverBranch,
+          itemType,
           date,
           direction: 'sent'
         },
@@ -226,13 +228,13 @@ const createTransfer = async (req, res) => {
         `${quantity} ${itemName} received from ${senderBranch} to ${receiverBranch}`,
         receiverBranch,
         activityTimestamp,
-        { 
-          itemCode: item.itemCode, 
-          itemName, 
-          quantity, 
-          senderBranch, 
-          receiverBranch, 
-          itemType, 
+        {
+          itemCode: item.itemCode,
+          itemName,
+          quantity,
+          senderBranch,
+          receiverBranch,
+          itemType,
           date,
           direction: 'received'
         },

@@ -13,7 +13,7 @@ const Reports = () => {
   const [reportData, setReportData] = useState([]);
   const [tableHead, setTableHead] = useState([]);
   const [tableBody, setTableBody] = useState([]);
-  
+
   // Filter states
   const [dateFrom, setDateFrom] = useState(() => {
     return new Date().toISOString().split('T')[0];
@@ -25,7 +25,7 @@ const Reports = () => {
   const [reportType, setReportType] = useState('item');
   const [itemFilter, setItemFilter] = useState('');
   const [itemTypeFilter, setItemTypeFilter] = useState('');
-  
+
   // Data states
   const [branches, setBranches] = useState([]);
   const [items, setItems] = useState([]);
@@ -35,22 +35,22 @@ const Reports = () => {
   // Format date to display only date part (YYYY-MM-DD)
   const formatDateOnly = (dateValue) => {
     if (!dateValue) return '';
-    
+
     // If it's already in YYYY-MM-DD format, return as is
     if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
       return dateValue;
     }
-    
+
     // If it's a string with time (ISO format), extract just the date part
     if (typeof dateValue === 'string' && dateValue.includes('T')) {
       return dateValue.split('T')[0];
     }
-    
+
     // If it's a Date object, convert to string
     if (dateValue instanceof Date) {
       return dateValue.toISOString().split('T')[0];
     }
-    
+
     // Try to parse as Date and format
     try {
       const date = new Date(dateValue);
@@ -60,12 +60,12 @@ const Reports = () => {
     } catch (error) {
       // If parsing fails, return original
     }
-    
+
     // If it's a string without T, try to extract first 10 characters (YYYY-MM-DD)
     if (typeof dateValue === 'string' && dateValue.length >= 10) {
       return dateValue.substring(0, 10);
     }
-    
+
     return dateValue;
   };
 
@@ -95,7 +95,7 @@ const Reports = () => {
         branchesAPI.getAll(),
         itemsAPI.getAll()
       ]);
-      
+
       if (branchesRes.data.success) {
         setBranches(branchesRes.data.branches);
       }
@@ -119,7 +119,7 @@ const Reports = () => {
 
     try {
       setLoading(true);
-      
+
       // Generate report based on type
       if (reportType === 'item' || reportType === 'type' || reportType === 'branch') {
         await generateSalesReport();
@@ -133,6 +133,8 @@ const Reports = () => {
         await generateZeroAddedReport();
       } else if (reportType === 'transfer') {
         await generateTransferReport();
+      } else if (reportType === 'remaining') {
+        await generateRemainingReport();
       }
     } catch (error) {
       console.error('Generate report error:', error);
@@ -145,55 +147,51 @@ const Reports = () => {
   const generateSalesReport = async () => {
     const head = ['Date', 'Branch', reportType === 'branch' ? 'Group' : 'Item Name', 'Type', 'Sold', 'Sales (Rs.)'];
     setTableHead(head);
-    
+
     const body = [];
     let totalRevenue = 0;
 
-    // Get normal item stocks - fetch date by date (API limitation)
+    // PERFORMANCE FIX: single batch call instead of branch×date nested loop
     if (filterBranch === 'All Branches' || filterBranch) {
-      const branchesToFetch = filterBranch === 'All Branches' 
+      const branchesToFetch = filterBranch === 'All Branches'
         ? getAvailableBranches().map(b => b.name)
         : [filterBranch];
 
-      const dates = getDateRange(dateFrom, dateTo);
-      
-      for (const branch of branchesToFetch) {
-        if (!branch) continue;
-        for (const date of dates) {
-          try {
-            const stockRes = await stocksAPI.get({ date, branch });
-            if (stockRes.data.success && stockRes.data.isFinished) {
-              const normalItems = items.filter(i => i.itemType === 'Normal Item');
-              for (const stock of stockRes.data.stocks || []) {
-                const item = normalItems.find(i => i.code === stock.itemCode);
-                if (!item) continue;
-                
-                if (itemFilter && item.name !== itemFilter) continue;
-                if (itemTypeFilter && item.itemType !== itemTypeFilter) continue;
-                
-                const soldQty = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
-                if (reportType === 'item' && soldQty <= 0) continue;
-                
-                const revenue = soldQty * (item.price || 0);
-                totalRevenue += revenue;
-                
-                const groupLabel = reportType === 'branch' ? branch : item.name;
-                body.push([
-                  date,
-                  branch,
-                  groupLabel,
-                  'Normal Item',
-                  soldQty,
-                  `Rs ${revenue.toFixed(2)}`
-                ]);
-              }
+      try {
+        const rangeRes = await stocksAPI.getRange({
+          dateFrom, dateTo,
+          branches: branchesToFetch.join(',')
+        });
+
+        if (rangeRes.data.success) {
+          const normalItems = items.filter(i => i.itemType === 'Normal Item');
+          for (const group of rangeRes.data.data || []) {
+            const { date, branch, isFinished, stocks: stockList } = group;
+            if (!isFinished) continue; // Sales report only shows finished batches
+
+            for (const stock of stockList || []) {
+              const item = normalItems.find(i => i.code === stock.itemCode);
+              if (!item) continue;
+              if (itemFilter && item.name !== itemFilter) continue;
+              if (itemTypeFilter && item.itemType !== itemTypeFilter) continue;
+
+              const soldQty = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
+              if (reportType === 'item' && soldQty <= 0) continue;
+
+              const historicalPrice = stock.price || item.price || 0;
+              const revenue = soldQty * historicalPrice;
+              totalRevenue += revenue;
+
+              const groupLabel = reportType === 'branch' ? branch : item.name;
+              body.push([date, branch, groupLabel, 'Normal Item', soldQty, `Rs ${revenue.toFixed(2)}`]);
             }
-          } catch (err) {
-            // Skip if no data for this date/branch
           }
         }
+      } catch (err) {
+        console.error('Error fetching stocks range for report:', err);
       }
     }
+
 
     // Get grocery sales
     try {
@@ -202,18 +200,18 @@ const Reports = () => {
         params.branch = filterBranch;
       }
       const grocerySalesRes = await groceryAPI.getSales(params);
-      
+
       if (grocerySalesRes.data.success) {
         for (const sale of grocerySalesRes.data.sales || []) {
           const saleDate = formatDateOnly(sale.date);
           if (itemFilter && sale.itemName !== itemFilter) continue;
           if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
           if (reportType === 'item' && (sale.soldQty || 0) <= 0) continue;
-          
+
           const revenue = parseFloat(sale.totalCash || 0);
           totalRevenue += revenue;
           const label = reportType === 'branch' ? sale.branch : (sale.itemName + ' (Grocery)');
-          
+
           body.push([
             saleDate,
             sale.branch,
@@ -235,18 +233,18 @@ const Reports = () => {
         params.branch = filterBranch;
       }
       const machineSalesRes = await machinesAPI.getSales(params);
-      
+
       if (machineSalesRes.data.success) {
         for (const sale of machineSalesRes.data.sales || []) {
           const saleDate = formatDateOnly(sale.date);
           if (itemFilter && sale.machineName !== itemFilter) continue;
           if (itemTypeFilter && 'Machine' !== itemTypeFilter) continue;
           if (reportType === 'item' && (sale.soldQty || 0) <= 0) continue;
-          
+
           const revenue = parseFloat(sale.totalCash || 0);
           totalRevenue += revenue;
           const label = reportType === 'branch' ? sale.branch : (sale.machineName + ' (Machine)');
-          
+
           body.push([
             saleDate,
             sale.branch,
@@ -273,48 +271,43 @@ const Reports = () => {
   const generateReturnsReport = async () => {
     const head = ['Item', 'Type', 'Branch', 'Total Waste Qty', 'Total Value (Rs.)'];
     setTableHead(head);
-    
+
     const body = [];
     const wasteByItemBranch = {};
     let totalWasteValue = 0;
 
-    // Process normal item returns from stocks
+    // PERFORMANCE FIX: single batch call for Normal Item returns
     if (filterBranch === 'All Branches' || filterBranch) {
-      const branchesToFetch = filterBranch === 'All Branches' 
+      const branchesToFetch = filterBranch === 'All Branches'
         ? getAvailableBranches().map(b => b.name)
         : [filterBranch];
 
-      for (const branch of branchesToFetch) {
-        if (!branch) continue;
-        const dates = getDateRange(dateFrom, dateTo);
-        for (const date of dates) {
-          try {
-            const stockRes = await stocksAPI.get({ date, branch });
-            if (stockRes.data.success) {
-              for (const stock of stockRes.data.stocks || []) {
-                const item = items.find(i => i.code === stock.itemCode && i.itemType === 'Normal Item');
-                if (!item || !stock.returned || stock.returned <= 0) continue;
-                
-                if (itemFilter && item.name !== itemFilter) continue;
-                if (itemTypeFilter && 'Normal Item' !== itemTypeFilter) continue;
-                
-                const wasteKey = `${item.code}||${branch}||Normal Item`;
-                if (!wasteByItemBranch[wasteKey]) {
-                  wasteByItemBranch[wasteKey] = { 
-                    name: item.name, 
-                    type: 'Normal Item', 
-                    branch: branch,
-                    qty: 0,
-                    price: parseFloat(item.price || 0)
-                  };
-                }
-                wasteByItemBranch[wasteKey].qty += stock.returned || 0;
+      try {
+        const rangeRes = await stocksAPI.getRange({
+          dateFrom, dateTo,
+          branches: branchesToFetch.join(',')
+        });
+
+        if (rangeRes.data.success) {
+          for (const group of rangeRes.data.data || []) {
+            const { branch, stocks: stockList } = group;
+            for (const stock of stockList || []) {
+              const item = items.find(i => i.code === stock.itemCode && i.itemType === 'Normal Item');
+              if (!item || !stock.returned || stock.returned <= 0) continue;
+              if (itemFilter && item.name !== itemFilter) continue;
+              if (itemTypeFilter && 'Normal Item' !== itemTypeFilter) continue;
+
+              const historicalPrice = stock.price || item.price || 0;
+              const wasteKey = `${item.code}||${branch}||Normal Item`;
+              if (!wasteByItemBranch[wasteKey]) {
+                wasteByItemBranch[wasteKey] = { name: item.name, type: 'Normal Item', branch, qty: 0, price: historicalPrice };
               }
+              wasteByItemBranch[wasteKey].qty += stock.returned || 0;
             }
-          } catch (err) {
-            // Skip if no data
           }
         }
+      } catch (err) {
+        console.error('Error fetching stocks range for returns report:', err);
       }
     }
 
@@ -325,18 +318,18 @@ const Reports = () => {
         params.branch = filterBranch;
       }
       const groceryReturnsRes = await groceryAPI.getReturns(params);
-      
+
       if (groceryReturnsRes.data.success) {
         for (const ret of groceryReturnsRes.data.returns || []) {
           if (itemFilter && ret.itemName !== itemFilter) continue;
           if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
-          
+
           const item = items.find(i => i.code === ret.itemCode);
           const wasteKey = `${ret.itemCode}||${ret.branch}||Grocery Item`;
           if (!wasteByItemBranch[wasteKey]) {
-            wasteByItemBranch[wasteKey] = { 
-              name: ret.itemName, 
-              type: 'Grocery Item', 
+            wasteByItemBranch[wasteKey] = {
+              name: ret.itemName,
+              type: 'Grocery Item',
               branch: ret.branch,
               qty: 0,
               price: item ? parseFloat(item.price || 0) : 0
@@ -353,14 +346,14 @@ const Reports = () => {
     Object.values(wasteByItemBranch).forEach(waste => {
       const totalValue = waste.qty * waste.price;
       totalWasteValue += totalValue;
-      
+
       const qtyDisplay = waste.type === 'Grocery Item' && items.find(i => i.name === waste.name)?.soldByWeight
         ? Number(waste.qty).toFixed(3)
         : Math.round(waste.qty);
-      
+
       body.push([
-        waste.name, 
-        waste.type, 
+        waste.name,
+        waste.type,
         waste.branch,
         qtyDisplay,
         `Rs ${totalValue.toFixed(2)}`
@@ -385,7 +378,7 @@ const Reports = () => {
   const generateCashReport = async () => {
     const head = ['Date', 'Branch', 'Expected (Rs.)', 'Actual (Rs.)', 'Difference (Rs.)', 'Status', 'Operator'];
     setTableHead(head);
-    
+
     const body = [];
 
     try {
@@ -393,7 +386,7 @@ const Reports = () => {
       if (filterBranch !== 'All Branches') {
         params.branch = filterBranch;
       }
-      
+
       const cashRes = await cashAPI.getEntries(params);
       if (cashRes.data.success) {
         for (const entry of cashRes.data.entries || []) {
@@ -423,67 +416,58 @@ const Reports = () => {
   const generateAddedItemsReport = async () => {
     const head = ['Date', 'Branch', 'Item Name', 'Type', 'Added', 'Returned', 'Transferred'];
     setTableHead(head);
-    
+
     const body = [];
 
     try {
-      // Normal Items - fetch stocks for date range
+      // PERFORMANCE FIX: batch call instead of branch×date loop
       if (filterBranch === 'All Branches' || filterBranch) {
-        const branchesToFetch = filterBranch === 'All Branches' 
+        const branchesToFetch = filterBranch === 'All Branches'
           ? getAvailableBranches().map(b => b.name)
           : [filterBranch];
 
-        const dates = getDateRange(dateFrom, dateTo);
-        
-        for (const branch of branchesToFetch) {
-          if (!branch) continue;
-          for (const date of dates) {
-            try {
-              const stockRes = await stocksAPI.get({ date, branch });
-              if (stockRes.data.success) {
-                const normalItems = items.filter(i => i.itemType === 'Normal Item');
-                for (const stock of stockRes.data.stocks || []) {
-                  const item = normalItems.find(i => i.code === stock.itemCode);
-                  if (!item) continue;
-                  
-                  if (itemFilter && item.name !== itemFilter) continue;
-                  if (itemTypeFilter && item.itemType !== itemTypeFilter) continue;
-                  
-                  const added = stock.added || 0;
-                  const returned = stock.returned || 0;
-                  const transferred = stock.transferred || 0;
-                  const available = Math.max(0, added - returned - transferred);
-                  
-                  // Show if any activity (added, returned, transferred, or available)
-                  if (added > 0 || returned > 0 || transferred > 0 || available > 0) {
-                    body.push([
-                      date,
-                      branch,
-                      item.name,
-                      'Normal Item',
-                      added,
-                      returned,
-                      transferred
-                    ]);
-                  }
+        try {
+          const rangeRes = await stocksAPI.getRange({
+            dateFrom, dateTo,
+            branches: branchesToFetch.join(',')
+          });
+
+          if (rangeRes.data.success) {
+            const normalItems = items.filter(i => i.itemType === 'Normal Item');
+            for (const group of rangeRes.data.data || []) {
+              const { date, branch, stocks: stockList } = group;
+              for (const stock of stockList || []) {
+                const item = normalItems.find(i => i.code === stock.itemCode);
+                if (!item) continue;
+                if (itemFilter && item.name !== itemFilter) continue;
+                if (itemTypeFilter && item.itemType !== itemTypeFilter) continue;
+
+                const added = stock.added || 0;
+                const returned = stock.returned || 0;
+                const transferred = stock.transferred || 0;
+                const available = Math.max(0, added - returned - transferred);
+
+                if (added > 0 || returned > 0 || transferred > 0 || available > 0) {
+                  body.push([date, branch, item.name, 'Normal Item', added, returned, transferred]);
                 }
               }
-            } catch (err) {
-              // Skip if no data for this date/branch
             }
           }
+        } catch (err) {
+          console.error('Error fetching stocks range for added items report:', err);
         }
       }
 
+
       // Grocery Items - aggregate by date|branch|itemCode
       const groceryAgg = {};
-      
+
       // Get grocery stocks (added) - include ALL grocery stock additions
       try {
-        const branchesToFetch = filterBranch === 'All Branches' 
+        const branchesToFetch = filterBranch === 'All Branches'
           ? getAvailableBranches().map(b => b.name)
           : [filterBranch];
-        
+
         for (const branchName of branchesToFetch) {
           const groceryStocksRes = await groceryAPI.getStocks({ branch: branchName });
           if (groceryStocksRes.data.success) {
@@ -504,7 +488,7 @@ const Reports = () => {
                   stockDate = new Date().toISOString().split('T')[0];
                 }
               }
-              
+
               // Filter by date range
               if (
                 (!dateFrom || stockDate >= dateFrom) &&
@@ -538,7 +522,7 @@ const Reports = () => {
           params.branch = filterBranch;
         }
         const groceryReturnsRes = await groceryAPI.getReturns(params);
-        
+
         if (groceryReturnsRes.data.success) {
           for (const ret of groceryReturnsRes.data.returns || []) {
             const normalizedDate = formatDateOnly(ret.date);
@@ -567,17 +551,17 @@ const Reports = () => {
           params.branch = filterBranch;
         }
         const transfersRes = await transfersAPI.get(params);
-        
+
         if (transfersRes.data.success) {
           for (const transfer of transfersRes.data.transfers || []) {
             if (transfer.itemType !== 'Grocery Item') continue;
-            
-            const shouldInclude = filterBranch === 'All Branches' 
+
+            const shouldInclude = filterBranch === 'All Branches'
               ? true
               : (transfer.senderBranch === filterBranch || transfer.receiverBranch === filterBranch);
-            
+
             if (!shouldInclude) continue;
-            
+
             const transferItems = Array.isArray(transfer.items) ? transfer.items : [];
             for (const item of transferItems) {
               // Sender: count as transferred (negative)
@@ -594,7 +578,7 @@ const Reports = () => {
                 };
               }
               groceryAgg[senderKey].transferred += parseFloat(item.quantity || 0);
-              
+
               // Receiver: count as added (positive)
               const receiverKey = `${normalizedDate}|${transfer.receiverBranch}|${item.itemCode}`;
               if (!groceryAgg[receiverKey]) {
@@ -619,26 +603,26 @@ const Reports = () => {
       for (const row of Object.values(groceryAgg)) {
         const item = items.find(i => i.code === row.itemCode && i.itemType === 'Grocery Item');
         if (!item) continue;
-        
+
         if (itemFilter && item.name !== itemFilter) continue;
         if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
-        
+
         // Show if any activity (added, returned, transferred, or calculated available)
         // IMPORTANT: Include all rows where added > 0, even if no returns or transfers
         const hasActivity = (row.added || 0) > 0 || (row.returned || 0) > 0 || (row.transferred || 0) > 0;
         if (!hasActivity) continue;
-        
+
         // Get available quantity from current grocery stocks for this branch/item
         try {
           const groceryStocksRes = await groceryAPI.getStocks({ branch: row.branch, itemCode: row.itemCode });
           const availableBatches = groceryStocksRes.data.success ? (groceryStocksRes.data.stocks || []) : [];
           // Calculate available as sum of remaining from all batches
           const availableQty = availableBatches.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
-          
+
           const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
           const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
           const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
-          
+
           body.push([
             formatDateOnly(row.date),
             row.branch,
@@ -653,7 +637,7 @@ const Reports = () => {
           const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
           const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
           const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
-          
+
           body.push([
             formatDateOnly(row.date),
             row.branch,
@@ -681,15 +665,15 @@ const Reports = () => {
   const generateZeroAddedReport = async () => {
     const head = ['Date', 'Branch', 'Item Name', 'Type', 'Added'];
     setTableHead(head);
-    
+
     const body = [];
 
     try {
       // Get all Normal and Grocery items
       const allItems = items.filter(i => i.itemType === 'Normal Item' || i.itemType === 'Grocery Item');
-      
+
       // Get branches to check
-      const branchesToCheck = filterBranch === 'All Branches' 
+      const branchesToCheck = filterBranch === 'All Branches'
         ? getAvailableBranches().map(b => b.name)
         : [filterBranch];
 
@@ -700,7 +684,7 @@ const Reports = () => {
       for (const date of dates) {
         for (const branchName of branchesToCheck) {
           if (!branchName) continue;
-          
+
           for (const item of allItems) {
             // Apply filters
             if (itemFilter && item.name !== itemFilter) continue;
@@ -731,7 +715,7 @@ const Reports = () => {
                     const normalizedStockDate = stockDate.includes('T') ? stockDate.split('T')[0] : stockDate;
                     return normalizedStockDate === date;
                   });
-                  
+
                   addedQty = stocksForDate.reduce((sum, s) => sum + parseFloat(s.quantity || 0), 0);
                 }
               } catch (err) {
@@ -769,7 +753,7 @@ const Reports = () => {
   const generateTransferReport = async () => {
     const head = ['Date', 'From Branch', 'To Branch', 'Item Type', 'Items Transferred', 'Total Quantity', 'Processed By'];
     setTableHead(head);
-    
+
     const body = [];
 
     try {
@@ -777,7 +761,7 @@ const Reports = () => {
       if (filterBranch !== 'All Branches') {
         params.branch = filterBranch;
       }
-      
+
       const transfersRes = await transfersAPI.get(params);
       if (transfersRes.data.success) {
         // Sort transfers by date (most recent first)
@@ -789,7 +773,7 @@ const Reports = () => {
 
         for (const transfer of sortedTransfers) {
           if (itemTypeFilter && transfer.itemType !== itemTypeFilter) continue;
-          
+
           // Format transfer date - use the date from transfer record (selected date from date picker)
           let transferDate = '';
           if (transfer.date) {
@@ -809,10 +793,10 @@ const Reports = () => {
               }
             }
           }
-          
+
           // Ensure items is an array
           const transferItems = Array.isArray(transfer.items) ? transfer.items : [];
-          
+
           if (transferItems.length === 0) {
             // If no items, still show the transfer but with a message
             body.push([
@@ -826,7 +810,7 @@ const Reports = () => {
             ]);
             continue;
           }
-          
+
           // Build item names list with quantities
           const itemNamesList = transferItems.map(item => {
             // Get item name from transfer data or lookup from items list
@@ -838,31 +822,31 @@ const Reports = () => {
             if (!itemName) {
               itemName = 'Unknown Item';
             }
-            
+
             // Get quantity
             const quantity = item.quantity || item.qty || 0;
-            
+
             // Determine if sold by weight (check item or lookup)
             let soldByWeight = item.soldByWeight;
             if (soldByWeight === undefined && item.itemCode) {
               const foundItem = items.find(i => i.code === item.itemCode);
               soldByWeight = foundItem ? foundItem.soldByWeight : false;
             }
-            
+
             // Format quantity based on type
             const qtyDisplay = soldByWeight ? Number(quantity).toFixed(3) : Math.trunc(quantity);
-            
+
             return `${itemName} (${qtyDisplay})`;
           });
-          
+
           const itemNames = itemNamesList.join(', ');
-          
+
           // Calculate total quantity
           const totalQty = transferItems.reduce((sum, item) => {
             const qty = item.quantity || item.qty || 0;
             return sum + parseFloat(qty);
           }, 0);
-          
+
           // Determine if sold by weight for display format
           const isGrocery = transfer.itemType === 'Grocery Item';
           const firstItem = transferItems[0];
@@ -874,11 +858,11 @@ const Reports = () => {
               isSoldByWeight = foundItem ? foundItem.soldByWeight : false;
             }
           }
-          
-          const totalQtyDisplay = isGrocery && isSoldByWeight 
-            ? Number(totalQty).toFixed(3) 
+
+          const totalQtyDisplay = isGrocery && isSoldByWeight
+            ? Number(totalQty).toFixed(3)
             : Math.trunc(totalQty);
-          
+
           // Add transfer to report with the date from transfer record (selected date from date picker)
           body.push([
             transferDate || '-',
@@ -904,24 +888,66 @@ const Reports = () => {
     setTableBody(body);
   };
 
+  const generateRemainingReport = async () => {
+    const head = ['Date', 'Branch', 'Item Name', 'Category', 'Remaining Qty', 'Recorded By', 'Notes'];
+    setTableHead(head);
+
+    const body = [];
+
+    try {
+      const params = { date: dateFrom };
+      if (filterBranch !== 'All Branches') {
+        params.branch = filterBranch;
+      }
+
+      const res = await groceryAPI.getDailyRemaining(params);
+      if (res.data.success) {
+        for (const record of res.data.records || []) {
+          if (itemFilter && record.itemName !== itemFilter) continue;
+
+          const recordDate = formatDateOnly(record.date);
+          const qtyDisplay = record.soldByWeight ? Number(record.remainingQty).toFixed(3) : Math.trunc(record.remainingQty);
+
+          body.push([
+            recordDate,
+            record.branch,
+            record.itemName,
+            record.category || 'Grocery Item',
+            qtyDisplay,
+            record.recordedBy || '-',
+            record.notes || '-'
+          ]);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching remaining records:', error);
+    }
+
+    if (body.length === 0) {
+      body.push({ cells: ['No remaining quantity data available for this date.'], colSpan: 7 });
+    }
+
+    setTableBody(body);
+  };
+
   const getDateRange = (start, end) => {
     const dates = [];
     const startDate = new Date(start);
     const endDate = new Date(end);
     const current = new Date(startDate);
-    
+
     while (current <= endDate) {
       dates.push(current.toISOString().split('T')[0]);
       current.setDate(current.getDate() + 1);
     }
-    
+
     return dates;
   };
 
   const exportExcel = () => {
     const table = document.getElementById('reportTable');
     if (!table) return;
-    
+
     const wb = XLSX.utils.table_to_book(table, { sheet: 'Report' });
     XLSX.writeFile(wb, `report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
@@ -934,12 +960,12 @@ const Reports = () => {
 
     try {
       const doc = new jsPDF('l', 'pt', 'a4');
-      
+
       // Report title
       const reportTitle = `Report - ${reportType.charAt(0).toUpperCase() + reportType.slice(1)}`;
       doc.setFontSize(16);
       doc.text(reportTitle, 40, 30);
-      
+
       // Date range info
       doc.setFontSize(10);
       let currentY = 45;
@@ -949,11 +975,11 @@ const Reports = () => {
         doc.text(`Branch: ${filterBranch}`, 40, currentY);
         currentY += 10;
       }
-      
+
       // Process table body
       const head = tableHead;
       const body = [];
-      
+
       tableBody.forEach(row => {
         if (row.isTotal) {
           // Total row - ensure it has correct length
@@ -975,13 +1001,13 @@ const Reports = () => {
           body.push(row);
         }
       });
-      
+
       // Validate body data
       if (body.length === 0) {
         showWarning('No data to export in PDF.');
         return;
       }
-      
+
       // Ensure all rows have the same length as headers
       const normalizedBody = body.map(row => {
         const normalizedRow = Array.isArray(row) ? [...row] : [String(row)];
@@ -990,14 +1016,14 @@ const Reports = () => {
         }
         return normalizedRow.slice(0, head.length);
       });
-      
+
       // Generate PDF table - start below the header info
       const startY = currentY + 10;
       autoTable(doc, {
         head: [head],
         body: normalizedBody,
         startY: startY,
-        styles: { 
+        styles: {
           fontSize: 8,
           cellPadding: 3
         },
@@ -1012,7 +1038,7 @@ const Reports = () => {
         margin: { top: 65, left: 40, right: 40 },
         tableWidth: 'auto'
       });
-      
+
       // Save PDF
       const fileName = `report_${reportType}_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(fileName);
@@ -1031,28 +1057,42 @@ const Reports = () => {
   return (
     <div className="container-fluid p-4">
       <h2 className="mb-4">Reports</h2>
-      
+
       {/* Filter Section */}
       <div className="card p-3 mb-4">
         <div className="row g-3">
-          <div className="col-md-2">
-            <label className="form-label">From</label>
-            <input
-              type="date"
-              className="form-control"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
-          </div>
-          <div className="col-md-2">
-            <label className="form-label">To</label>
-            <input
-              type="date"
-              className="form-control"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
-          </div>
+          {reportType === 'remaining' ? (
+            <div className="col-md-4">
+              <label className="form-label">Date</label>
+              <input
+                type="date"
+                className="form-control"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="col-md-2">
+                <label className="form-label">From</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                />
+              </div>
+              <div className="col-md-2">
+                <label className="form-label">To</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                />
+              </div>
+            </>
+          )}
           <div className="col-md-3">
             <label className="form-label">Branch</label>
             <select
@@ -1081,6 +1121,7 @@ const Reports = () => {
               <option value="zeroAdded">Zero Added Items</option>
               <option value="transfer">Internal Transfer</option>
               <option value="addedItems">Added Items</option>
+              <option value="remaining">Remaining Qty Report</option>
             </select>
           </div>
           <div className="col-md-3">
@@ -1098,8 +1139,9 @@ const Reports = () => {
               </select>
               <select
                 className="form-select"
-                value={itemTypeFilter}
+                value={reportType === 'remaining' ? 'Grocery Item' : itemTypeFilter}
                 onChange={(e) => setItemTypeFilter(e.target.value)}
+                disabled={reportType === 'remaining'}
               >
                 <option value="">All Types</option>
                 <option value="Normal Item">Normal Item</option>

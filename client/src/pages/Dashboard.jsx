@@ -140,14 +140,12 @@ const Dashboard = () => {
         
         console.log(`Successfully parsed ${activities.length} activities`); // Debug log
         setRecentActivities(activities);
-        setCurrentPage(1); // Reset to first page when activities reload
+        setCurrentPage(1);
       } else {
-        console.warn('No activities returned. Response:', activitiesRes.data);
         setRecentActivities([]);
       }
     } catch (error) {
-      console.error('Error loading recent activities:', error);
-      console.error('Error details:', error.response?.data || error.message);
+      console.error('Error loading recent activities:', error.message);
       setRecentActivities([]);
     }
   }, [branch, dateFrom, dateTo]);
@@ -174,16 +172,16 @@ const Dashboard = () => {
 
   // Load recent activities independently - doesn't need branches/items to be loaded
   useEffect(() => {
-    // Load immediately on mount and when filters change
     loadRecentActivities();
     
-    // Auto-refresh recent activities every 30 seconds for real-time updates
+    // Auto-refresh every 60 seconds (was 30s - reduced DB load)
     const interval = setInterval(() => {
       loadRecentActivities();
-    }, 30000); // Refresh every 30 seconds
+    }, 60000);
 
     return () => clearInterval(interval);
-  }, [branch, dateFrom, dateTo, loadRecentActivities]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branch, dateFrom, dateTo]); // Do NOT add loadRecentActivities — it is stable via useCallback
 
   const loadInitialData = async () => {
     try {
@@ -206,19 +204,8 @@ const Dashboard = () => {
     }
   };
 
-  const getDateRange = (start, end) => {
-    const dates = [];
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    const current = new Date(startDate);
-    
-    while (current <= endDate) {
-      dates.push(current.toISOString().split('T')[0]);
-      current.setDate(current.getDate() + 1);
-    }
-    
-    return dates;
-  };
+  // NOTE: getDateRange is imported from '../utils/helpers' - local copy removed (BUG-18 fix)
+
 
   const loadDashboard = async () => {
     setLoading(true);
@@ -246,52 +233,57 @@ const Dashboard = () => {
       // Get dates in range
       const dates = getDateRange(dateFrom, dateTo);
 
-      // Process normal item stocks (finished batches only for sales, all for stock value)
-      for (const branchName of branchesToFetch) {
-        for (const date of dates) {
-          try {
-            const stockRes = await stocksAPI.get({ date, branch: branchName });
-            if (stockRes.data.success) {
-              const normalItems = items.filter(i => i.itemType === 'Normal Item');
-              
-              for (const stock of stockRes.data.stocks || []) {
-                const item = normalItems.find(i => i.code === stock.itemCode);
-                if (!item) continue;
+      // PERFORMANCE FIX: single batch API call instead of N×M sequential loop
+      // Old: for each branch × for each date → await stocksAPI.get(...)  [150+ calls]
+      // New: one call to /stocks/range returns all data at once
+      try {
+        const rangeParams = { dateFrom, dateTo };
+        if (branchesToFetch.length > 0) {
+          rangeParams.branches = branchesToFetch.join(',');
+        }
+        const rangeRes = await stocksAPI.getRange(rangeParams);
 
-                const soldQty = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
-                const available = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
-                
-                // Stock value (only unfinished batches - finished batches have 0 available stock)
-                if (!stockRes.data.isFinished) {
-                  stockValueNormal += available * (item.price || 0);
+        if (rangeRes.data.success) {
+          const normalItems = items.filter(i => i.itemType === 'Normal Item');
+
+          for (const group of rangeRes.data.data || []) {
+            const { date, branch: branchName, isFinished, stocks: stockList } = group;
+
+            for (const stock of stockList || []) {
+              const item = normalItems.find(i => i.code === stock.itemCode);
+              if (!item) continue;
+
+              const soldQty = Math.max(0, (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0));
+              const available = soldQty;
+              const historicalPrice = stock.price || item.price || 0;
+
+              if (!isFinished) {
+                stockValueNormal += available * historicalPrice;
+              }
+
+              if (isFinished) {
+                const revenue = soldQty * historicalPrice;
+                totalSales += revenue;
+                normalItemSales += revenue;
+                totalItemsSold += soldQty;
+                totalReturnItems += stock.returned || 0;
+
+                if (!salesData[date]) salesData[date] = 0;
+                salesData[date] += revenue;
+
+                if (!salesByItemCode[stock.itemCode]) {
+                  salesByItemCode[stock.itemCode] = { name: item.name, qty: 0, value: 0 };
                 }
-
-                // Sales from finished batches (track separately for Expected Cash calculation)
-                if (stockRes.data.isFinished) {
-                  const revenue = soldQty * (item.price || 0);
-                  totalSales += revenue;
-                  normalItemSales += revenue; // Track normal item sales separately
-                  totalItemsSold += soldQty;
-                  totalReturnItems += stock.returned || 0;
-
-                  // Sales chart data
-                  if (!salesData[date]) salesData[date] = 0;
-                  salesData[date] += revenue;
-
-                  // Top items data
-                  if (!salesByItemCode[stock.itemCode]) {
-                    salesByItemCode[stock.itemCode] = { name: item.name, qty: 0, value: 0 };
-                  }
-                  salesByItemCode[stock.itemCode].qty += soldQty;
-                  salesByItemCode[stock.itemCode].value += revenue;
-                }
+                salesByItemCode[stock.itemCode].qty += soldQty;
+                salesByItemCode[stock.itemCode].value += revenue;
               }
             }
-          } catch (err) {
-            // Skip if no data for this date/branch
           }
         }
+      } catch (err) {
+        console.error('Error fetching stocks range for dashboard:', err);
       }
+
 
       // Get grocery sales
       try {
@@ -430,7 +422,9 @@ const Dashboard = () => {
       // - Grocery: expected cash is based on sales only (not remaining stock value)
       // - Machine: sales contribute to expected cash
       // Expected Cash = Normal Item Sales (finished) + Normal Stock Value (unfinished) + Grocery Sales + Machine Sales + Available Stock Value (Grocery)
-      const calculatedExpectedCash = normalItemSales + stockValueNormal + stockValueGrocery + totalExpectedCash;
+      // BUG-11 fix: stockValueGrocery is unsold inventory, NOT expected cash
+      // Expected Cash = Normal sales (finished) + Normal stock value (unfinished) + Grocery sales + Machine sales
+      const calculatedExpectedCash = normalItemSales + stockValueNormal + totalExpectedCash;
 
       // Update stats
       setStats({

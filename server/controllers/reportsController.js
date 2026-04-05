@@ -10,9 +10,17 @@ const generateReport = async (req, res) => {
     // This is a simplified version - full implementation would handle all report types
     if (type === 'item' || type === 'type' || type === 'branch') {
       // Get normal item sales (finished batches only)
+      // Uses ItemPriceHistory to get correct price at time of sale (not current price)
       const stocksQuery = `
         SELECT s.date, s.branch, s.itemCode, s.added, s.returned, s.transferred,
-               i.name as itemName, i.itemType, i.price
+               i.name as itemName, i.itemType,
+               COALESCE(
+                 (SELECT TOP 1 ph.price
+                  FROM ItemPriceHistory ph
+                  WHERE ph.itemCode = s.itemCode AND ph.effectiveFrom <= s.date
+                  ORDER BY ph.effectiveFrom DESC),
+                 i.price
+               ) as price
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
         INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch
@@ -55,9 +63,10 @@ const generateReport = async (req, res) => {
           itemType: stock.itemType,
           returned: stock.returned || 0,
           sold: soldQty,
-          sales: soldQty * parseFloat(stock.price)
+          sales: soldQty * parseFloat(stock.price)  // historical price
         });
       });
+
 
       // Add grocery sales
       let groceryQuery = 'SELECT * FROM GrocerySales WHERE 1=1';

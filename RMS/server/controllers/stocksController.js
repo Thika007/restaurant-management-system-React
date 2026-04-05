@@ -4,13 +4,13 @@ const { createActivity } = require('./activitiesController');
 const getStocks = async (req, res) => {
   try {
     const { date, branch, itemType } = req.query;
-    
+
     if (!date || !branch) {
       return res.status(400).json({ success: false, message: 'Date and branch are required' });
     }
 
     const pool = await getConnection();
-    
+
     // Get stocks for the date and branch
     const result = await pool.request()
       .input('date', sql.Date, date)
@@ -46,14 +46,14 @@ const getStocks = async (req, res) => {
       updatedAt: s.updatedAt ? (s.updatedAt instanceof Date ? s.updatedAt.toISOString() : new Date(s.updatedAt).toISOString()) : null
     }));
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       stocks,
       isFinished: finishedResult.recordset.length > 0,
       finishedAt: finishedResult.recordset.length > 0 && finishedResult.recordset[0].finishedAt
-        ? (finishedResult.recordset[0].finishedAt instanceof Date 
-            ? finishedResult.recordset[0].finishedAt.toISOString() 
-            : new Date(finishedResult.recordset[0].finishedAt).toISOString())
+        ? (finishedResult.recordset[0].finishedAt instanceof Date
+          ? finishedResult.recordset[0].finishedAt.toISOString()
+          : new Date(finishedResult.recordset[0].finishedAt).toISOString())
         : null
     });
   } catch (error) {
@@ -140,7 +140,7 @@ const updateStocks = async (req, res) => {
       const itemCodesStr = itemCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
       const itemsQuery = await pool.request()
         .query(`SELECT code, name FROM Items WHERE code IN (${itemCodesStr})`);
-      
+
       itemsQuery.recordset.forEach(item => {
         itemsMap[item.code] = item.name;
       });
@@ -161,10 +161,12 @@ const updateStocks = async (req, res) => {
             USING (SELECT @date AS date, @branch AS branch, @itemCode AS itemCode, @quantity AS quantity) AS source
             ON target.date = source.date AND target.branch = source.branch AND target.itemCode = source.itemCode
             WHEN MATCHED THEN
-              UPDATE SET added = added + source.quantity, updatedAt = GETDATE()
+              UPDATE SET added = added + source.quantity,
+                         sold = ISNULL(added, 0) + source.quantity - ISNULL(returned, 0) - ISNULL(transferred, 0), 
+                         updatedAt = GETDATE()
             WHEN NOT MATCHED THEN
               INSERT (date, branch, itemCode, added, returned, transferred, sold, createdAt, updatedAt)
-              VALUES (source.date, source.branch, source.itemCode, source.quantity, 0, 0, 0, GETDATE(), GETDATE());
+              VALUES (source.date, source.branch, source.itemCode, source.quantity, 0, 0, source.quantity, GETDATE(), GETDATE());
           `);
 
         // Log activity for stock addition
@@ -323,7 +325,7 @@ const updateReturns = async (req, res) => {
       const itemCodesStr = itemCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
       const itemsQuery = await pool.request()
         .query(`SELECT code, name FROM Items WHERE code IN (${itemCodesStr})`);
-      
+
       itemsQuery.recordset.forEach(item => {
         itemsMap[item.code] = item.name;
       });
@@ -343,11 +345,11 @@ const updateReturns = async (req, res) => {
         if (stockCheck.recordset.length > 0) {
           const stock = stockCheck.recordset[0];
           const available = (stock.added || 0) - (stock.returned || 0) - (stock.transferred || 0);
-          
+
           if (item.quantity > available) {
-            return res.status(400).json({ 
-              success: false, 
-              message: `Cannot return ${item.quantity}. Only ${available} available for item ${item.itemCode}` 
+            return res.status(400).json({
+              success: false,
+              message: `Cannot return ${item.quantity}. Only ${available} available for item ${item.itemCode}`
             });
           }
         }
@@ -360,7 +362,7 @@ const updateReturns = async (req, res) => {
           .query(`
             UPDATE Stocks 
             SET returned = returned + @quantity,
-                sold = (added - returned - transferred),
+                sold = ISNULL(added, 0) - (ISNULL(returned, 0) + @quantity) - ISNULL(transferred, 0),
                 updatedAt = GETDATE()
             WHERE date = @date AND branch = @branch AND itemCode = @itemCode
           `);

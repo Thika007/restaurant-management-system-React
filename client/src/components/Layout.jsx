@@ -102,22 +102,22 @@ const Layout = () => {
       const response = await notificationsAPI.get(params);
       if (response.data.success) {
         const allNotifications = response.data.notifications || [];
-        
+
         // Additional frontend filtering based on user's assigned branches
         let filteredNotifications = allNotifications;
         if (user.role !== 'admin' && user.assignedBranches && user.assignedBranches.length > 0) {
-          filteredNotifications = allNotifications.filter(n => 
+          filteredNotifications = allNotifications.filter(n =>
             !n.branch || user.assignedBranches.includes(n.branch)
           );
         }
-        
+
         // Filter out notifications that are already read by this user
         const userId = user.id || user.role;
         const unreadNotifications = filteredNotifications.filter(n => {
           const readBy = n.readBy || [];
           return !readBy.includes(userId);
         });
-        
+
         // Sanitize messages to remove any batch identifiers like "(Batch: ...)"
         const sanitizeMessage = (message) => {
           if (!message) return '';
@@ -157,7 +157,7 @@ const Layout = () => {
   useEffect(() => {
     // Only attempt if polling is enabled
     if (user && notifPollingEnabled) {
-      notificationsAPI.checkExpiring().catch(() => {});
+      notificationsAPI.checkExpiring().catch(() => { });
     }
   }, [user]);
 
@@ -189,7 +189,7 @@ const Layout = () => {
         if (notifPollingEnabled) {
           notificationsAPI.checkExpiring()
             .then(() => loadNotifications())
-            .catch(() => {});
+            .catch(() => { });
         }
       }, 300000);
     };
@@ -227,7 +227,7 @@ const Layout = () => {
       const response = await notificationsAPI.markAsRead(notificationId, userId);
       if (response.data.success) {
         // Remove notification from local state immediately
-        setNotifications(prevNotifications => 
+        setNotifications(prevNotifications =>
           prevNotifications.filter(n => n.id !== notificationId)
         );
         // Update unread count
@@ -249,12 +249,12 @@ const Layout = () => {
         const readBy = n.readBy || [];
         return !readBy.includes(userId);
       });
-      
+
       // Mark all as read on server
       await Promise.all(
         unreadNotifications.map(n => notificationsAPI.markAsRead(n.id, userId))
       );
-      
+
       // Remove all notifications from UI
       setNotifications([]);
       setUnreadCount(0);
@@ -313,8 +313,8 @@ const Layout = () => {
             Restaurant Management System
           </a>
           <div className="navbar-nav ms-auto">
-            <button 
-              className="btn btn-link position-relative me-3" 
+            <button
+              className="btn btn-link position-relative me-3"
               style={{ color: '#fff' }}
               onClick={toggleNotificationPanel}
               aria-label="Notifications"
@@ -345,15 +345,15 @@ const Layout = () => {
 
       {/* Notification Panel */}
       {showNotificationPanel && (
-        <div 
+        <div
           ref={notificationPanelRef}
           className="position-fixed end-0 bg-white shadow p-3"
-          style={{ 
-            width: '360px', 
-            maxHeight: '70vh', 
-            overflow: 'auto', 
-            zIndex: 1060, 
-            marginTop: '56px', 
+          style={{
+            width: '360px',
+            maxHeight: '70vh',
+            overflow: 'auto',
+            zIndex: 1060,
+            marginTop: '56px',
             marginRight: '12px',
             borderRadius: '8px',
             border: '1px solid #dee2e6'
@@ -362,8 +362,8 @@ const Layout = () => {
           <div className="d-flex justify-content-between align-items-center mb-2">
             <strong>Notifications</strong>
             {unreadCount > 0 && (
-              <button 
-                className="btn btn-sm btn-outline-secondary" 
+              <button
+                className="btn btn-sm btn-outline-secondary"
                 onClick={markAllAsRead}
               >
                 Mark all as read
@@ -371,7 +371,7 @@ const Layout = () => {
             )}
           </div>
           <div className="mb-2">
-            <select 
+            <select
               className="form-select form-select-sm"
               value={notificationBranchFilter}
               onChange={(e) => setNotificationBranchFilter(e.target.value)}
@@ -390,21 +390,21 @@ const Layout = () => {
                 const userId = user?.id || user?.role;
                 const readBy = notification.readBy || [];
                 const isRead = readBy.includes(userId);
-                
+
                 return (
-                  <div 
+                  <div
                     key={notification.id}
                     className={`border rounded p-2 mb-2 position-relative ${!isRead ? 'bg-light' : ''}`}
                   >
-                    <button 
-                      type="button" 
-                      className="btn-close position-absolute end-0 top-0 m-2" 
+                    <button
+                      type="button"
+                      className="btn-close position-absolute end-0 top-0 m-2"
                       aria-label="Close"
                       onClick={(e) => markNotificationAsRead(notification.id, e)}
                       style={{ zIndex: 10 }}
                     ></button>
                     <div className="small text-muted">
-                      {new Date(notification.createdAt).toLocaleString()} 
+                      {new Date(notification.createdAt).toLocaleString()}
                       {notification.branch && ` • ${notification.branch}`}
                     </div>
                     <div>{(() => {
@@ -522,21 +522,21 @@ const Layout = () => {
             <Route path="/add-return" element={<AddReturn />} />
             <Route path="/cash-management" element={<CashManagement />} />
             <Route path="/reports" element={<Reports />} />
-            <Route 
-              path="/expire-tracking" 
+            <Route
+              path="/expire-tracking"
               element={
-                user?.role === 'admin' || (user?.accesses && user.accesses.includes('Expire Tracking')) 
-                  ? <ExpireTracking /> 
+                user?.role === 'admin' || (user?.accesses && user.accesses.includes('Expire Tracking'))
+                  ? <ExpireTracking />
                   : <Navigate to="/dashboard" replace />
-              } 
+              }
             />
-            <Route 
-              path="/stock-tracking" 
+            <Route
+              path="/stock-tracking"
               element={
-                user?.role === 'admin' || (user?.accesses && user.accesses.includes('Stock Tracking')) 
-                  ? <StockTracking /> 
+                user?.role === 'admin' || (user?.accesses && user.accesses.includes('Stock Tracking'))
+                  ? <StockTracking />
                   : <Navigate to="/dashboard" replace />
-              } 
+              }
             />
             <Route path="/branch-management" element={<BranchManagement />} />
             <Route path="/user-management" element={<UserManagement />} />
@@ -576,6 +576,7 @@ const Layout = () => {
                     <li>All transfers</li>
                     <li>All cash entries</li>
                     <li>All expiry tracking data</li>
+                    <li>All Recent Activities</li>
                   </ul>
                   <p className="mt-2 mb-0 text-muted small">
                     After clearing, Dashboard, Reports, and Expire Tracking pages will show NO data.
