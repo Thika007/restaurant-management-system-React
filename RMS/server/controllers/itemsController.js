@@ -103,6 +103,21 @@ const createItem = async (req, res) => {
         VALUES (@code, @itemType, @name, @category, @subcategory, @price, @description, @soldByWeight, @notifyExpiry, @minQty, @maxQty)
       `);
 
+    // Save initial price to ItemPriceHistory (effectiveFrom = today)
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      await pool.request()
+        .input('itemCode', sql.NVarChar, code)
+        .input('price', sql.Decimal(18, 2), price)
+        .input('effectiveFrom', sql.Date, today)
+        .query(`
+          INSERT INTO ItemPriceHistory (itemCode, price, effectiveFrom)
+          VALUES (@itemCode, @price, @effectiveFrom)
+        `);
+    } catch (phErr) {
+      console.error('Warning: Could not save price history for new item:', phErr.message);
+    }
+
     // Log activity
     const itemTypeLabel = itemType === 'Normal Item' ? 'Normal Item' : itemType === 'Grocery Item' ? 'Grocery Item' : 'Machine';
     await createActivity(
@@ -130,16 +145,17 @@ const updateItem = async (req, res) => {
 
     const pool = await getConnection();
 
-    // Get current item to check type
+    // Get current item to check type AND current price
     const currentItem = await pool.request()
       .input('code', sql.NVarChar, code)
-      .query('SELECT itemType FROM Items WHERE code = @code');
+      .query('SELECT itemType, price FROM Items WHERE code = @code');
 
     if (currentItem.recordset.length === 0) {
       return res.status(404).json({ success: false, message: 'Item not found' });
     }
 
     const itemType = currentItem.recordset[0].itemType;
+    const oldPrice = parseFloat(currentItem.recordset[0].price);
 
     // Validate minQty and maxQty for Grocery Items
     if (itemType === 'Grocery Item') {
@@ -199,6 +215,31 @@ const updateItem = async (req, res) => {
         WHERE code = @code
       `);
 
+    // If price changed, record new price in ItemPriceHistory
+    const newPrice = parseFloat(price);
+    if (newPrice !== oldPrice) {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        await pool.request()
+          .input('itemCode', sql.NVarChar, code)
+          .input('price', sql.Decimal(18, 2), newPrice)
+          .input('effectiveFrom', sql.Date, today)
+          .query(`
+            -- If a record already exists for today, update it; otherwise insert
+            MERGE ItemPriceHistory AS target
+            USING (SELECT @itemCode AS itemCode, @effectiveFrom AS effectiveFrom) AS source
+            ON target.itemCode = source.itemCode AND target.effectiveFrom = source.effectiveFrom
+            WHEN MATCHED THEN
+              UPDATE SET price = @price, changedAt = GETDATE()
+            WHEN NOT MATCHED THEN
+              INSERT (itemCode, price, effectiveFrom) VALUES (@itemCode, @price, @effectiveFrom);
+          `);
+        console.log(`Price history saved: ${code} ${oldPrice} -> ${newPrice} from ${today}`);
+      } catch (phErr) {
+        console.error('Warning: Could not save price history:', phErr.message);
+      }
+    }
+
     // Get item name for activity logging
     const itemResult = await pool.request()
       .input('code', sql.NVarChar, code)
@@ -208,11 +249,12 @@ const updateItem = async (req, res) => {
       const itemName = itemResult.recordset[0].name;
       const itemTypeLabel = itemResult.recordset[0].itemType === 'Normal Item' ? 'Normal Item' : itemResult.recordset[0].itemType === 'Grocery Item' ? 'Grocery Item' : 'Machine';
       
-      // Log activity
+      // Log activity (mention price change)
+      const changeNote = newPrice !== oldPrice ? ` (price: Rs ${oldPrice} → Rs ${newPrice})` : '';
       await createActivity(
         'item_updated',
-        `${itemTypeLabel} "${itemName}" updated`,
-        null, // No branch for item update
+        `${itemTypeLabel} "${itemName}" updated${changeNote}`,
+        null,
         new Date()
       );
     }

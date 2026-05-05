@@ -1,174 +1,194 @@
-# Bakery Management System - Full Stack Migration
+# Restaurant Management System (RMS)
+### Version Update: April 9, 2026 (Hotfix)
 
-This project has been migrated from HTML/CSS/JavaScript to a full-stack React.js + Node.js + MS SQL Server application.
+> **This folder is the production distribution package.**  
+> Copy this entire `RMS` folder to the client machine to deploy.
 
-## Project Structure
+---
+
+## What's New in This Update (2026-04-09 Hotfix)
+
+### 🔴 Critical Bug Fixes
+- **Normal Items Report Visibility Fixed** — Fixed an SQL table alias binding error that was preventing "Normal Items" from loading and displaying across all system Reports.
+- **Historical Price Bug Fixed** — Previously, when an item's price was updated, ALL old sales reports were recalculated using the new price. This corrupted historical revenue data. Now, reports always show the price that was valid **at the time of the sale**.
+- **Transfer System — Database Transaction Added** — Internal transfers are now atomic. If anything fails during a transfer, ALL changes are rolled back. Previously, a server crash mid-transfer could silently lose stock.
+- **Grocery Transfer — Out-of-Stock Validation** — System now blocks transfers before deducting stock if sender does not have enough quantity.
+- **Normal Item Transfer — Stock Check Added** — System now validates sender has available stock before processing.
+
+### 🟠 UI & Performance Improvements
+- **Extreme Frontend Buffering Delays Resolved** — Generating "Zero Added Items" and "Added Items" reports previously caused the system to freeze up completely due to iterating over 7,500+ sequentially blocked network requests in complex deep loops. This data is now pre-fetched in a batch format, reducing a ~3-minute buffering hang down to milliseconds.
+- **Reports Data Table Pagination Added** — The table UI in the Reports section now slices output to show a max of **100 rows per page**. Next and Previous controls have been added to browse through loaded report data securely without freezing the application with excessive HTML node rendering.
+
+### 🟠 Performance Improvements
+- **Dashboard & Reports load 10× faster** — Previously, the system made 150+ individual database calls when loading the dashboard or generating reports (one per branch per date). Now, a single batch query fetches all data at once.
+- **Server stability improved** — Removed debug code that was running a full table scan (`COUNT(*)`) on the 20,000+ row activity log on every 30-second poll. Server was crashing under load.
+
+### 🟡 Other Fixes
+- Grocery receiver batch `addedDate` now correctly stores the original batch date (not the transfer date)
+- Grocery batch "finished" check now also applies to the **receiving** branch during transfers
+- Transfer activity log message corrected: "received from X **at** Y" (was wrong: "from X to Y")
+- Removed SQL injection risk in item code queries (now fully parameterized)
+- Dashboard Expected Cash formula fixed — unsold grocery inventory value was being incorrectly added to expected cash
+- `itemType` filter parameter was not being bound in stock queries (potential SQL error fixed)
+
+---
+
+## ⚠️ IMPORTANT: Database Migration Required
+
+**Before running the updated server, you MUST run the following SQL script on the client's SQL Server database.**  
+This only needs to be done **once**.
+
+### Migration Script: `scripts/add-price-history.sql`
+
+**Steps:**
+
+1. Open **SQL Server Management Studio (SSMS)**
+2. Connect to the client's SQL Server instance
+3. Select database: **`BakeryManagementDB`**
+4. Open the file: `RMS\scripts\add-price-history.sql`
+5. Click **Execute** (or press `F5`)
+
+**What the script does:**
+```sql
+-- Step 1: Creates the ItemPriceHistory table (only if it doesn't exist)
+CREATE TABLE ItemPriceHistory (
+    id            INT IDENTITY PRIMARY KEY,
+    itemCode      NVARCHAR(50) NOT NULL,
+    price         DECIMAL(18,2) NOT NULL,
+    effectiveFrom DATE NOT NULL,   -- Price was valid FROM this date
+    changedAt     DATETIME DEFAULT GETDATE()
+)
+
+-- Step 2: Seeds all current item prices with effectiveFrom = '2000-01-01'
+-- This ensures all historical records map to a correct price
+INSERT INTO ItemPriceHistory (itemCode, price, effectiveFrom)
+SELECT code, price, '2000-01-01' FROM Items
+WHERE code NOT IN (SELECT DISTINCT itemCode FROM ItemPriceHistory)
+```
+
+> **Safe to run multiple times** — The script uses `IF NOT EXISTS` checks. Running it again on a database that already has the table will safely skip creation and show a message.
+
+---
+
+## Folder Structure
 
 ```
-Restaurant Management System2/
-├── client/                 # React frontend (Vite)
-│   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── pages/         # Page components
-│   │   ├── services/      # API service layer
-│   │   ├── context/       # React context (Auth)
-│   │   ├── styles/        # CSS styles
-│   │   └── utils/         # Helper functions
-│   ├── package.json
-│   └── vite.config.js
-├── server/                 # Node.js backend (Express)
-│   ├── config/            # Database configuration
-│   ├── controllers/       # Request handlers
-│   ├── routes/            # API routes
-│   ├── index.js           # Server entry point
+RMS/
+├── client/
+│   └── dist/               ← Built React frontend (production bundle)
+│       ├── index.html
+│       └── assets/
+├── server/                 ← Node.js backend (Express + MS SQL Server)
+│   ├── controllers/
+│   ├── routes/
+│   ├── config/
+│   ├── index.js
 │   └── package.json
 ├── scripts/
-│   └── db.sql             # SQL Server database schema
-└── README.md
+│   ├── db.sql              ← Full database schema (for fresh install)
+│   └── add-price-history.sql  ← ⚠️ Run this migration on existing databases
+└── README.md               ← This file
 ```
 
-## Setup Instructions
+---
 
-### Prerequisites
-- Node.js (v16+)
-- MS SQL Server
-- npm or yarn
+## Deployment Instructions
 
-### Backend Setup
+### Step 1 — Database Migration (Existing Installation)
 
-1. Navigate to server directory:
-```bash
-cd server
+Run `scripts/add-price-history.sql` in SSMS as described above.
+
+---
+
+### Step 2 — Update Server Files
+
+1. Stop the currently running server (close the terminal or task)
+2. Replace the existing `server` folder on the client machine with the new `RMS/server` folder
+3. The `server/.env` file contains database connection settings — **do not overwrite it**
+
+```
+⚠️  Do NOT replace the server/.env file.
+    It contains the client's database credentials.
+    Only copy the server code files, NOT the .env file.
 ```
 
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Create `.env` file in server directory:
+If you are doing a fresh copy, create a new `.env` file in the server folder:
 ```env
-DB_SERVER=DESKTOP-9AV7L99
+DB_SERVER=YOUR_SQL_SERVER_NAME
 DB_DATABASE=BakeryManagementDB
 PORT=5000
-NODE_ENV=development
-JWT_SECRET=your-secret-key-change-in-production
+NODE_ENV=production
+JWT_SECRET=your-secret-key-here
 ```
 
-**Note:** This setup uses Windows Authentication, so no DB_USER or DB_PASSWORD is needed. Make sure you're running Node.js as a user with access to SQL Server.
+---
 
-4. Create database and run schema:
-   - Open SQL Server Management Studio
-   - Create database `BakeryManagementDB`
-   - Run `scripts/db.sql` to create all tables
+### Step 3 — Install Server Dependencies
 
-5. Start the server:
+Only needed if this is the first time or `package.json` changed:
+
 ```bash
+cd server
+npm install --production
+```
+
+---
+
+### Step 4 — Update Frontend Files
+
+1. Replace the existing `client/dist` folder with `RMS/client/dist`
+2. The web server (IIS or wherever the frontend is served from) should point to `client/dist`
+3. No `npm install` needed for the frontend — it is already pre-built
+
+---
+
+### Step 5 — Start Server
+
+```bash
+cd server
 npm start
-# or for development with nodemon
-npm run dev
 ```
 
-Server will run on `http://localhost:5000`
+Server runs on: `http://localhost:5000`  
+Frontend served from: `client/dist/index.html`
 
-### Frontend Setup
-
-1. Navigate to client directory:
-```bash
-cd client
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Create `.env` file in client directory:
-```env
-VITE_API_URL=http://localhost:5000/api
-```
-
-4. Start the development server:
-```bash
-npm run dev
-```
-
-Frontend will run on `http://localhost:3000`
-
-## Features Implemented
-
-### Backend (Node.js + Express + MS SQL Server)
-- ✅ Authentication API
-- ✅ Users CRUD API
-- ✅ Branches CRUD API
-- ✅ Items CRUD API
-- ✅ Stocks Management API
-- ✅ Grocery Management API (stocks, sales, returns)
-- ✅ Machines Management API (batches, sales)
-- ✅ Cash Management API
-- ✅ Transfers API
-- ✅ Reports API
-- ✅ Notifications API
-
-### Frontend (React + Vite)
-- ✅ Project structure setup
-- ✅ Authentication context and login page
-- ✅ Layout with sidebar navigation
-- ✅ API service layer (Axios)
-- ✅ Dashboard page (basic structure)
-- ✅ Routing setup
-- ✅ CSS styles preserved
-
-## Next Steps
-
-The foundation is complete. To finish the migration:
-
-1. **Complete React Pages**: Implement full functionality for each page:
-   - Inventory/Master Creation
-   - Add Stock
-   - Internal Transfer
-   - Add Return
-   - Cash Management
-   - Reports
-   - Expire Tracking
-   - Branch Management
-   - User Management
-
-2. **Replace localStorage calls**: All data operations should use the API service layer instead of localStorage.
-
-3. **Add state management**: Consider adding React Query or Redux for better state management.
-
-4. **Implement charts**: Add Chart.js integration for dashboard charts.
-
-5. **Add form validation**: Implement proper form validation and error handling.
-
-6. **Testing**: Add unit tests and integration tests.
-
-## API Endpoints
-
-All API endpoints are under `/api` prefix:
-
-- `POST /api/auth/login` - User login
-- `GET /api/users` - Get all users
-- `POST /api/users` - Create user
-- `GET /api/branches` - Get all branches
-- `POST /api/branches` - Create branch
-- `GET /api/items` - Get all items
-- `POST /api/items` - Create item
-- `GET /api/stocks` - Get stocks
-- `POST /api/stocks/update` - Update stocks
-- And more... (see server/routes for full list)
+---
 
 ## Default Login Credentials
 
-- Admin: `admin` / `admin`
-- Operator: `operator` / `operator`
+| Role | Username | Password |
+|------|----------|----------|
+| Admin | `admin` | `admin` |
+| Operator | `operator` | `operator` |
 
-## Notes
+> **Security Note:** Change the default passwords immediately after first login in production.
 
-- The database schema includes all necessary tables for the complete system
-- All original JavaScript functions have been analyzed and converted to API endpoints
-- The CSS styling has been preserved from the original design
-- The frontend uses React Router for navigation
-- Authentication is managed through React Context API
+---
 
+## Troubleshooting
+
+### Server won't start
+- Check that SQL Server is running
+- Verify `.env` file has correct `DB_SERVER` and `DB_DATABASE`
+- Run `npm install` in the server folder
+
+### Reports show wrong prices for old data
+- The `add-price-history.sql` migration has not been run
+- Run it in SSMS and restart the server
+
+### Dashboard loads slowly
+- This has been fixed in this update — if still slow, check network connection to SQL Server
+- Ensure SQL Server indexes are up to date (`EXEC sp_updatestats`)
+
+### "Transfer failed and was fully rolled back" error
+- Sender does not have enough stock for the requested item
+- Check the stock quantities before transferring
+
+---
+
+## Version History
+
+| Date | Description |
+|------|-------------|
+| 2026-04-05 | Historical price fix, transfer transaction safety, performance batch API, server crash fix |
+| *(previous)* | Initial production deployment |

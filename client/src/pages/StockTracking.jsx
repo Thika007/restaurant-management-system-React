@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { stockTrackingAPI, branchesAPI, itemsAPI } from '../services/api';
 import { useToast } from '../context/ToastContext';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 const StockTracking = () => {
   const { user } = useAuth();
@@ -212,23 +215,88 @@ const StockTracking = () => {
     }
   };
 
+  // Export to PDF function
+  const exportToPDF = () => {
+    if (stockData.length === 0) return;
+
+    const doc = new jsPDF();
+    
+    // Title
+    doc.setFontSize(16);
+    doc.text('Grocery Stock Tracking Report', 14, 15);
+    doc.setFontSize(11);
+    doc.text(`Branch: ${selectedBranch || 'All'}`, 14, 22);
+    const date = new Date().toLocaleDateString();
+    doc.text(`Date: ${date}`, 14, 28);
+
+    const tableColumn = ["Item Name", "Category", "Quantity", "Min Qty", "Max Qty", "Status"];
+    const tableRows = [];
+
+    stockData.forEach(item => {
+      const rowData = [
+        item.name,
+        item.category,
+        formatQuantity(item.currentQty),
+        item.minQty != null ? formatQuantity(item.minQty) : 'N/A',
+        item.maxQty != null ? formatQuantity(item.maxQty) : 'N/A',
+        item.status
+      ];
+      tableRows.push(rowData);
+    });
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 35,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [41, 128, 185] },
+    });
+
+    doc.save(`Stock_Report_${selectedBranch}_${date.replace(/\//g, '-')}.pdf`);
+  };
+
+  // Export to Excel function
+  const exportToExcel = () => {
+    if (stockData.length === 0) return;
+
+    const exportData = stockData.map(item => ({
+      'Item Name': item.name,
+      'Category': item.category,
+      'Current Quantity': item.currentQty,
+      'Min Quantity': item.minQty != null ? item.minQty : 'N/A',
+      'Max Quantity': item.maxQty != null ? item.maxQty : 'N/A',
+      'Status': item.status,
+      'Branch': item.branch
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Stock Data");
+    
+    const date = new Date().toLocaleDateString().replace(/\//g, '-');
+    XLSX.writeFile(workbook, `Stock_Report_${selectedBranch}_${date}.xlsx`);
+  };
+
   if (loading && stockData.length === 0 && !selectedBranch) {
     return <div className="text-center p-5">Loading...</div>;
   }
 
   return (
-    <div className="p-4">
-      <h2 className="mb-4">Stock Tracking</h2>
+    <div className="px-4 py-3 h-100 d-flex flex-column">
+      <h3 className="mb-3 d-flex align-items-center text-dark" style={{ marginTop: '-5px' }}>
+        <i className="fas fa-boxes text-primary me-3 shadow-sm rounded p-2 bg-white"></i> Stock Tracking
+      </h3>
 
-      {/* Filters Section */}
-      <div className="card mb-3">
-        <div className="card-body">
-          <h4>Filter Stock</h4>
-          <div className="row g-3">
+      {/* Combined Container */}
+      <div className="card shadow-sm border-0 flex-grow-1 d-flex flex-column overflow-hidden">
+        
+        {/* Filter Section (Fixed at top) */}
+        <div className="card-body flex-shrink-0 border-bottom bg-white pt-3 pb-3">
+          <div className="row g-3 align-items-end">
             <div className="col-md-3">
-              <label className="form-label">Branch *</label>
+              <label className="form-label fw-semibold text-muted small mb-1">Branch *</label>
               <select
-                className="form-select"
+                className="form-select shadow-none"
                 value={selectedBranch}
                 onChange={(e) => setSelectedBranch(e.target.value)}
                 required
@@ -242,9 +310,9 @@ const StockTracking = () => {
               </select>
             </div>
             <div className="col-md-3">
-              <label className="form-label">Category</label>
+              <label className="form-label fw-semibold text-muted small mb-1">Category</label>
               <select
-                className="form-select"
+                className="form-select shadow-none"
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
               >
@@ -257,9 +325,9 @@ const StockTracking = () => {
               </select>
             </div>
             <div className="col-md-3">
-              <label className="form-label">Status</label>
+              <label className="form-label fw-semibold text-muted small mb-1">Status</label>
               <select
-                className="form-select"
+                className="form-select shadow-none"
                 value={selectedStatus}
                 onChange={(e) => setSelectedStatus(e.target.value)}
               >
@@ -270,7 +338,7 @@ const StockTracking = () => {
                 <option value="Unknown">Unknown</option>
               </select>
             </div>
-            <div className="col-md-3 d-flex align-items-end">
+            <div className="col-md-3">
               <button
                 className="btn btn-primary w-100"
                 onClick={loadStockTracking}
@@ -281,45 +349,41 @@ const StockTracking = () => {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Stock Tracking Table */}
-      <div className="card">
-        <div className="card-header">
-          <div className="d-flex justify-content-between align-items-center">
-            <span>Grocery Stock Tracking</span>
-            {selectedBranch && (
-              <span className="text-muted small">Branch: {selectedBranch}</span>
-            )}
-          </div>
-        </div>
-        <div className="card-body">
+        {/* Table Section (Scrollable) */}
+        <div className="card-body p-0 d-flex flex-column overflow-hidden bg-white">
           {!selectedBranch ? (
-            <div className="text-center p-5 text-muted">
-              <i className="fas fa-info-circle fa-2x mb-3"></i>
+            <div className="text-center p-5 text-muted flex-grow-1 d-flex flex-column justify-content-center align-items-center">
+              <i className="fas fa-info-circle fa-3x mb-3 text-primary opacity-50"></i>
+              <h5 className="fw-semibold">Select a Branch</h5>
               <p>Please select a branch to view stock tracking data.</p>
             </div>
           ) : loading ? (
-            <div className="text-center p-5">Loading...</div>
+            <div className="text-center p-5 flex-grow-1 d-flex flex-column justify-content-center align-items-center">
+              <div className="spinner-border text-primary" role="status">
+                <span className="visually-hidden">Loading...</span>
+              </div>
+            </div>
           ) : stockData.length === 0 ? (
-            <div className="text-center p-5 text-muted">
-              <i className="fas fa-box-open fa-2x mb-3"></i>
+            <div className="text-center p-5 text-muted flex-grow-1 d-flex flex-column justify-content-center align-items-center">
+              <i className="fas fa-box-open fa-3x mb-3 text-warning opacity-75"></i>
+              <h5 className="fw-semibold">No Items Found</h5>
               <p>No grocery items found for the selected filters.</p>
             </div>
           ) : (
-            <div className="table-responsive">
-              <table className="table table-hover">
-                <thead>
+            <div className="table-responsive flex-grow-1" style={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}>
+              <table className="table table-hover align-middle mb-0">
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f8f9fa' }} className="shadow-sm">
                   <tr>
-                    <th>Item Name</th>
-                    <th>Category</th>
-                    <th>Current Quantity</th>
-                    <th>Stock Level</th>
-                    <th>Status</th>
-                    <th>Branch</th>
+                    <th className="py-3 border-0 bg-light text-nowrap px-4">Item Name</th>
+                    <th className="py-3 border-0 bg-light text-nowrap">Category</th>
+                    <th className="py-3 border-0 bg-light text-nowrap">Current Quantity</th>
+                    <th className="py-3 border-0 bg-light" style={{ minWidth: '220px' }}>Stock Level</th>
+                    <th className="py-3 border-0 bg-light text-nowrap">Status</th>
+                    <th className="py-3 border-0 bg-light text-nowrap px-4">Branch</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="border-top-0">
                   {stockData.map((item) => {
                     const progressPercentage = calculateProgress(item);
                     const progressColor = getProgressBarColor(
@@ -328,45 +392,39 @@ const StockTracking = () => {
                       item.maxQty,
                       item.currentQty
                     );
-                    const hasMinMax = item.minQty != null && item.maxQty != null;
                     
                     return (
                       <tr key={item.code}>
-                        <td>{item.name}</td>
-                        <td>{item.category}</td>
-                        <td>{formatQuantity(item.currentQty)}</td>
+                        <td className="fw-medium px-4">{item.name}</td>
+                        <td><span className="badge bg-secondary bg-opacity-10 text-secondary border">{item.category}</span></td>
+                        <td className="fw-bold fs-6">{formatQuantity(item.currentQty)}</td>
                         <td>
-                          <div className="progress" style={{ height: '25px', minWidth: '150px' }}>
+                          <div className="progress shadow-sm" style={{ height: '14px', backgroundColor: '#e9ecef', borderRadius: '8px' }}>
                             <div
-                              className="progress-bar"
+                              className="progress-bar progress-bar-striped progress-bar-animated"
                               role="progressbar"
                               style={{
                                 width: `${Math.max(0, Math.min(100, progressPercentage))}%`,
                                 backgroundColor: progressColor,
-                                transition: 'all 0.3s ease'
+                                transition: 'width 0.8s ease'
                               }}
                               aria-valuenow={progressPercentage}
                               aria-valuemin={0}
                               aria-valuemax={100}
                             >
-                              {progressPercentage > 5 && (
-                                <small className="text-white fw-bold">
-                                  {progressPercentage.toFixed(1)}%
-                                </small>
-                              )}
                             </div>
                           </div>
-                          <div className="small text-muted mt-1">
-                            Min: {item.minQty != null ? formatQuantity(item.minQty) : 'N/A'} | 
-                            Max: {item.maxQty != null ? formatQuantity(item.maxQty) : 'N/A'}
+                          <div className="d-flex justify-content-between small text-muted mt-2 fw-medium">
+                            <span>Min: {item.minQty != null ? formatQuantity(item.minQty) : 'N/A'}</span>
+                            <span>Max: {item.maxQty != null ? formatQuantity(item.maxQty) : 'N/A'}</span>
                           </div>
                         </td>
                         <td>
-                          <span className={`badge ${getStatusBadgeClass(item.status)}`}>
+                          <span className={`badge ${getStatusBadgeClass(item.status)} rounded-pill px-3 py-2 shadow-sm`}>
                             {item.status}
                           </span>
                         </td>
-                        <td>{item.branch}</td>
+                        <td className="text-muted px-4">{item.branch}</td>
                       </tr>
                     );
                   })}
@@ -375,6 +433,18 @@ const StockTracking = () => {
             </div>
           )}
         </div>
+
+        {/* Action Buttons (Footer) */}
+        {stockData.length > 0 && selectedBranch && (
+          <div className="card-footer bg-white border-top py-3 d-flex justify-content-end gap-3 flex-shrink-0">
+            <button className="btn btn-outline-danger shadow-sm px-4" onClick={exportToPDF}>
+              <i className="fas fa-file-pdf me-2"></i> Export PDF
+            </button>
+            <button className="btn btn-outline-success shadow-sm px-4" onClick={exportToExcel}>
+              <i className="fas fa-file-excel me-2"></i> Export Excel
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -417,20 +417,23 @@ const getStocksRange = async (req, res) => {
       .input('dateTo', sql.Date, dateTo);
 
     // Build optional filters
+    // branchFilter    → used in Stocks JOIN query (has 's' alias: s.branch)
+    // branchFilterFB  → used in FinishedBatches query (no alias: branch)
     let branchFilter = '';
+    let branchFilterFB = '';
     if (branches) {
-      // branches passed as comma-separated e.g. "Branch1,Branch2"
       const branchList = branches.split(',').map(b => b.trim()).filter(Boolean);
       if (branchList.length === 1) {
         request.input('branch', sql.NVarChar, branchList[0]);
-        branchFilter = 'AND s.branch = @branch';
+        branchFilter   = 'AND s.branch = @branch';
+        branchFilterFB = 'AND branch = @branch';
       } else if (branchList.length > 1) {
-        // Parameterize each branch safely
         const placeholders = branchList.map((b, i) => {
           request.input(`branch${i}`, sql.NVarChar, b);
           return `@branch${i}`;
         }).join(',');
-        branchFilter = `AND s.branch IN (${placeholders})`;
+        branchFilter   = `AND s.branch IN (${placeholders})`;
+        branchFilterFB = `AND branch IN (${placeholders})`;
       }
     }
 
@@ -461,14 +464,31 @@ const getStocksRange = async (req, res) => {
       ORDER BY s.date, s.branch, i.name
     `);
 
+    // BUG FIX: mssql request objects can only execute ONE .query() call.
+    // Create a fresh request for the FinishedBatches query with parameters re-bound.
+    const finishedRequest = pool.request()
+      .input('dateFrom', sql.Date, dateFrom)
+      .input('dateTo', sql.Date, dateTo);
+
+    if (branches) {
+      const branchList = branches.split(',').map(b => b.trim()).filter(Boolean);
+      if (branchList.length === 1) {
+        finishedRequest.input('branch', sql.NVarChar, branchList[0]);
+      } else if (branchList.length > 1) {
+        branchList.forEach((b, i) => finishedRequest.input(`branch${i}`, sql.NVarChar, b));
+      }
+    }
+
     // Get finished batches for the range (Normal Items)
-    const finishedResult = await request.query(`
+    const finishedResult = await finishedRequest.query(`
       SELECT date, branch, finishedAt
       FROM FinishedBatches
       WHERE date >= @dateFrom AND date <= @dateTo
       AND itemType = 'Normal Item'
-      ${branchFilter}
+      ${branchFilterFB}
     `);
+
+
 
     // Build a lookup map: "YYYY-MM-DD|branch" => isFinished
     const finishedMap = {};

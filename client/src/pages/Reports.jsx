@@ -14,6 +14,10 @@ const Reports = () => {
   const [tableHead, setTableHead] = useState([]);
   const [tableBody, setTableBody] = useState([]);
 
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 100;
+
   // Filter states
   const [dateFrom, setDateFrom] = useState(() => {
     return new Date().toISOString().split('T')[0];
@@ -111,6 +115,7 @@ const Reports = () => {
   };
 
   const generateReport = async () => {
+    setCurrentPage(1); // Reset to first page on new report generation
     if (!dateFrom || !dateTo) {
       setTableHead([]);
       setTableBody([{ cells: ['Please select date range'], colSpan: 7 }]);
@@ -599,41 +604,25 @@ const Reports = () => {
         console.error('Error fetching transfers:', error);
       }
 
-      // Process grocery aggregated data - show ALL rows where added > 0 (even if no returns/transfers)
-      for (const row of Object.values(groceryAgg)) {
-        const item = items.find(i => i.code === row.itemCode && i.itemType === 'Grocery Item');
-        if (!item) continue;
+        // Process grocery aggregated data - show ALL rows where added > 0 (even if no returns/transfers)
+        let processedCount = 0;
+        for (const row of Object.values(groceryAgg)) {
+          // Unblock UI thread periodically
+          if (++processedCount % 500 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
 
-        if (itemFilter && item.name !== itemFilter) continue;
-        if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
+          const item = items.find(i => i.code === row.itemCode && i.itemType === 'Grocery Item');
+          if (!item) continue;
 
-        // Show if any activity (added, returned, transferred, or calculated available)
-        // IMPORTANT: Include all rows where added > 0, even if no returns or transfers
-        const hasActivity = (row.added || 0) > 0 || (row.returned || 0) > 0 || (row.transferred || 0) > 0;
-        if (!hasActivity) continue;
+          if (itemFilter && item.name !== itemFilter) continue;
+          if (itemTypeFilter && 'Grocery Item' !== itemTypeFilter) continue;
 
-        // Get available quantity from current grocery stocks for this branch/item
-        try {
-          const groceryStocksRes = await groceryAPI.getStocks({ branch: row.branch, itemCode: row.itemCode });
-          const availableBatches = groceryStocksRes.data.success ? (groceryStocksRes.data.stocks || []) : [];
-          // Calculate available as sum of remaining from all batches
-          const availableQty = availableBatches.reduce((sum, s) => sum + parseFloat(s.remaining || 0), 0);
+          // Show if any activity (added, returned, transferred, or calculated available)
+          const hasActivity = (row.added || 0) > 0 || (row.returned || 0) > 0 || (row.transferred || 0) > 0;
+          if (!hasActivity) continue;
 
-          const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
-          const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
-          const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
-
-          body.push([
-            formatDateOnly(row.date),
-            row.branch,
-            `${item.name} (Grocery)`,
-            'Grocery Item',
-            addedDisplay,
-            returnedDisplay,
-            transferredDisplay
-          ]);
-        } catch (error) {
-          // If can't fetch available, still show the row with calculated available
+          // Removed the extremely slow sequential groceryAPI call that calculated an unused 'availableQty'
           const addedDisplay = item.soldByWeight ? Number(row.added || 0).toFixed(3) : Math.round(row.added || 0);
           const returnedDisplay = item.soldByWeight ? Number(row.returned || 0).toFixed(3) : Math.round(row.returned || 0);
           const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
@@ -648,7 +637,6 @@ const Reports = () => {
             transferredDisplay
           ]);
         }
-      }
 
     } catch (error) {
       console.error('Error generating added items report:', error);
@@ -680,12 +668,60 @@ const Reports = () => {
       // Generate date range
       const dates = getDateRange(dateFrom, dateTo);
 
+      // ==========================================
+      // PERFORMANCE OPTIMIZATION: Pre-fetch data
+      // ==========================================
+      const normalAddedMap = {};
+      const groceryStocksByBranch = {};
+
+      // 1. Fetch all normal stocks for the range at once
+      try {
+        const rangeRes = await stocksAPI.getRange({
+          dateFrom, dateTo,
+          branches: branchesToCheck.join(',')
+        });
+        if (rangeRes.data.success) {
+          const groups = rangeRes.data.data || [];
+          for (const group of groups) {
+            const groupDate = String(group.date).split('T')[0];
+            for (const stock of group.stocks || []) {
+              const key = `${groupDate}|${group.branch}|${stock.itemCode}`;
+              normalAddedMap[key] = (stock.added || 0);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to pre-fetch normal stocks:', err);
+      }
+
+      // 2. Fetch grocery stocks per branch
+      for (const branch of branchesToCheck) {
+        try {
+          const res = await groceryAPI.getStocks({ branch });
+          if (res.data.success) {
+            groceryStocksByBranch[branch] = res.data.stocks || [];
+          } else {
+            groceryStocksByBranch[branch] = [];
+          }
+        } catch (err) {
+          groceryStocksByBranch[branch] = [];
+        }
+      }
+
+      // Instead of processing thousands of rows in a blocking sync loop, do it in chunks of 500
+      let processedCount = 0;
+      
       // For each date, branch, and item combination, check if added quantity is 0
       for (const date of dates) {
         for (const branchName of branchesToCheck) {
           if (!branchName) continue;
 
           for (const item of allItems) {
+            // Unblock UI thread periodically
+            if (++processedCount % 500 === 0) {
+              await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
             // Apply filters
             if (itemFilter && item.name !== itemFilter) continue;
             if (itemTypeFilter && item.itemType !== itemTypeFilter) continue;
@@ -693,35 +729,18 @@ const Reports = () => {
             let addedQty = 0;
 
             if (item.itemType === 'Normal Item') {
-              // Check Stocks table for this date/branch/itemCode
-              try {
-                const stockRes = await stocksAPI.get({ date, branch: branchName });
-                if (stockRes.data.success && stockRes.data.stocks) {
-                  const stockEntry = stockRes.data.stocks.find(s => s.itemCode === item.code);
-                  addedQty = stockEntry ? (stockEntry.added || 0) : 0;
-                }
-              } catch (err) {
-                // If no stock record exists, addedQty remains 0
-                addedQty = 0;
-              }
+              const lookupKey = `${date}|${branchName}|${item.code}`;
+              addedQty = normalAddedMap[lookupKey] || 0;
             } else if (item.itemType === 'Grocery Item') {
-              // Check GroceryStocks table - sum all quantities for this date/branch/itemCode
-              try {
-                const groceryStocksRes = await groceryAPI.getStocks({ branch: branchName, itemCode: item.code });
-                if (groceryStocksRes.data.success && groceryStocksRes.data.stocks) {
-                  // Filter by date (use addedDate first, then date)
-                  const stocksForDate = groceryStocksRes.data.stocks.filter(s => {
-                    const stockDate = s.addedDate || s.date || '';
-                    const normalizedStockDate = stockDate.includes('T') ? stockDate.split('T')[0] : stockDate;
-                    return normalizedStockDate === date;
-                  });
-
-                  addedQty = stocksForDate.reduce((sum, s) => sum + parseFloat(s.quantity || 0), 0);
-                }
-              } catch (err) {
-                // If no stock record exists, addedQty remains 0
-                addedQty = 0;
-              }
+              const bStocks = groceryStocksByBranch[branchName] || [];
+              const stocksForDate = bStocks.filter(s => {
+                const stockDate = s.addedDate || s.date || '';
+                const normalizedDate = typeof stockDate === 'string' && stockDate.includes('T') 
+                    ? stockDate.split('T')[0] 
+                    : String(stockDate).substring(0, 10);
+                return normalizedDate === date;
+              });
+              addedQty = stocksForDate.reduce((sum, s) => sum + parseFloat(s.quantity || 0), 0);
             }
 
             // If added quantity is 0, include in report
@@ -1050,6 +1069,18 @@ const Reports = () => {
 
   const availableBranches = getAvailableBranches();
 
+  // Pagination logic
+  const totalPages = Math.ceil(tableBody.length / itemsPerPage);
+  const paginatedBody = tableBody.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const handlePrevPage = () => {
+    setCurrentPage((prev) => Math.max(prev - 1, 1));
+  };
+
+  const handleNextPage = () => {
+    setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+  };
+
   if (loading && reportData.length === 0) {
     return <div className="text-center p-5">Loading...</div>;
   }
@@ -1171,6 +1202,7 @@ const Reports = () => {
           {loading ? (
             <div className="text-center p-3">Generating report...</div>
           ) : (
+            <>
             <div className="table-responsive">
               <table className="table table-striped" id="reportTable">
                 <thead>
@@ -1188,7 +1220,8 @@ const Reports = () => {
                       </td>
                     </tr>
                   ) : (
-                    tableBody.map((row, index) => {
+                    paginatedBody.map((row, index) => {
+                      // Adjust original index for stable keys if needed, but index works fine for viewing
                       if (row.isTotal) {
                         return (
                           <tr key={index} style={{ fontWeight: 'bold', backgroundColor: '#e9ecef' }}>
@@ -1219,6 +1252,33 @@ const Reports = () => {
                 </tbody>
               </table>
             </div>
+            {totalPages > 1 && (
+              <div className="d-flex justify-content-between align-items-center mt-3">
+                <span className="text-muted">
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, tableBody.length)} of {tableBody.length} entries
+                </span>
+                <div className="btn-group">
+                  <button 
+                    className="btn btn-outline-primary shadow-none" 
+                    onClick={handlePrevPage} 
+                    disabled={currentPage === 1}
+                  >
+                    Previous
+                  </button>
+                  <button className="btn btn-primary shadow-none" disabled style={{ opacity: 1, backgroundColor: '#e9ecef', color: '#495057', borderColor: '#dee2e6' }}>
+                    Page {currentPage} of {totalPages}
+                  </button>
+                  <button 
+                    className="btn btn-outline-primary shadow-none" 
+                    onClick={handleNextPage} 
+                    disabled={currentPage === totalPages}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
           )}
         </div>
       </div>

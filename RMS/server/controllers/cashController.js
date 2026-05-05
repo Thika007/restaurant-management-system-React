@@ -45,13 +45,19 @@ const calculateExpectedCash = async (req, res) => {
 
     const pool = await getConnection();
     
-    // Calculate from normal items (finished batches only)
+    // Calculate from normal items using historical price (BUG-02 fix)
     const stocksResult = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
       .input('itemType', sql.NVarChar, 'Normal Item')
       .query(`
-        SELECT s.itemCode, s.added, s.returned, s.transferred, i.price, i.itemType
+        SELECT s.itemCode, s.added, s.returned, s.transferred,
+               COALESCE(
+                 (SELECT TOP 1 ph.price FROM ItemPriceHistory ph
+                  WHERE ph.itemCode = s.itemCode AND ph.effectiveFrom <= @date
+                  ORDER BY ph.effectiveFrom DESC),
+                 i.price
+               ) as price, i.itemType
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
         INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch AND f.itemType = @itemType
@@ -153,7 +159,13 @@ const calculateExpectedCashInternal = async (pool, branch, date) => {
       .input('branch', sql.NVarChar, branch)
       .input('itemType', sql.NVarChar, 'Normal Item')
       .query(`
-        SELECT s.itemCode, s.added, s.returned, s.transferred, i.price
+        SELECT s.itemCode, s.added, s.returned, s.transferred,
+               COALESCE(
+                 (SELECT TOP 1 ph.price FROM ItemPriceHistory ph
+                  WHERE ph.itemCode = s.itemCode AND ph.effectiveFrom <= @date
+                  ORDER BY ph.effectiveFrom DESC),
+                 i.price
+               ) as price
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
         INNER JOIN FinishedBatches f ON s.date = f.date AND s.branch = f.branch AND f.itemType = @itemType

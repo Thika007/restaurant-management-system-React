@@ -12,11 +12,22 @@ const getStocks = async (req, res) => {
     const pool = await getConnection();
 
     // Get stocks for the date and branch
-    const result = await pool.request()
+    // Uses ItemPriceHistory subquery to get price that was valid on that date
+    const stockRequest = pool.request()
       .input('date', sql.Date, date)
-      .input('branch', sql.NVarChar, branch)
-      .query(`
-        SELECT s.*, i.name as itemName, i.category, i.price, i.itemType
+      .input('branch', sql.NVarChar, branch);
+    if (itemType) {
+      stockRequest.input('itemType', sql.NVarChar, itemType); // BUG-13 fix: bind param
+    }
+    const result = await stockRequest.query(`
+        SELECT s.*, i.name as itemName, i.category, i.itemType,
+               COALESCE(
+                 (SELECT TOP 1 ph.price
+                  FROM ItemPriceHistory ph
+                  WHERE ph.itemCode = s.itemCode AND ph.effectiveFrom <= s.date
+                  ORDER BY ph.effectiveFrom DESC),
+                 i.price
+               ) as price
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
         WHERE s.date = @date AND s.branch = @branch
@@ -132,18 +143,14 @@ const updateStocks = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Batch is already finished' });
     }
 
-    // Get item names for activity logging
+    // Get item names for activity logging (BUG-10 fix: parameterized queries, no string concat)
     const itemCodes = items.filter(i => i.quantity > 0).map(i => i.itemCode);
     let itemsMap = {};
-    if (itemCodes.length > 0) {
-      // Build parameterized query for item names
-      const itemCodesStr = itemCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
-      const itemsQuery = await pool.request()
-        .query(`SELECT code, name FROM Items WHERE code IN (${itemCodesStr})`);
-
-      itemsQuery.recordset.forEach(item => {
-        itemsMap[item.code] = item.name;
-      });
+    for (const code of itemCodes) {
+      const r = await pool.request()
+        .input('code', sql.NVarChar, code)
+        .query('SELECT code, name FROM Items WHERE code = @code');
+      if (r.recordset.length > 0) itemsMap[r.recordset[0].code] = r.recordset[0].name;
     }
 
     const activityTimestamp = new Date(); // Use current timestamp for accurate activity logging
@@ -231,12 +238,19 @@ const finishBatch = async (req, res) => {
         WHERE date = @date AND branch = @branch
       `);
 
-    // Calculate total revenue for the batch finish activity
+    // Calculate total revenue for the batch finish activity (BUG-03 fix: use ItemPriceHistory)
     const stocksResult = await pool.request()
       .input('date', sql.Date, date)
       .input('branch', sql.NVarChar, branch)
       .query(`
-        SELECT s.itemCode, s.added, s.returned, s.transferred, i.name as itemName, i.price
+        SELECT s.itemCode, s.added, s.returned, s.transferred, i.name as itemName,
+               COALESCE(
+                 (SELECT TOP 1 ph.price
+                  FROM ItemPriceHistory ph
+                  WHERE ph.itemCode = s.itemCode AND ph.effectiveFrom <= @date
+                  ORDER BY ph.effectiveFrom DESC),
+                 i.price
+               ) as price
         FROM Stocks s
         INNER JOIN Items i ON s.itemCode = i.code
         WHERE s.date = @date AND s.branch = @branch
@@ -318,17 +332,14 @@ const updateReturns = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Batch is already finished' });
     }
 
-    // Get item names for activity logging
+    // Get item names for activity logging (BUG-10 fix: parameterized queries, no string concat)
     const itemCodes = items.filter(i => i.quantity > 0).map(i => i.itemCode);
     let itemsMap = {};
-    if (itemCodes.length > 0) {
-      const itemCodesStr = itemCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
-      const itemsQuery = await pool.request()
-        .query(`SELECT code, name FROM Items WHERE code IN (${itemCodesStr})`);
-
-      itemsQuery.recordset.forEach(item => {
-        itemsMap[item.code] = item.name;
-      });
+    for (const code of itemCodes) {
+      const r = await pool.request()
+        .input('code', sql.NVarChar, code)
+        .query('SELECT code, name FROM Items WHERE code = @code');
+      if (r.recordset.length > 0) itemsMap[r.recordset[0].code] = r.recordset[0].name;
     }
 
     const activityTimestamp = new Date(); // Use current timestamp for accurate activity logging
@@ -387,11 +398,145 @@ const updateReturns = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// BATCH endpoint: fetch all stocks for a date range + multiple branches in
+// ONE SQL query instead of calling /stocks once per date×branch combination.
+// This fixes the N×M sequential API call performance problem in Dashboard/Reports.
+// ---------------------------------------------------------------------------
+const getStocksRange = async (req, res) => {
+  try {
+    const { dateFrom, dateTo, branches, itemType } = req.query;
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ success: false, message: 'dateFrom and dateTo are required' });
+    }
+
+    const pool = await getConnection();
+    const request = pool.request()
+      .input('dateFrom', sql.Date, dateFrom)
+      .input('dateTo', sql.Date, dateTo);
+
+    // Build optional filters
+    // branchFilter    → used in Stocks JOIN query (has 's' alias: s.branch)
+    // branchFilterFB  → used in FinishedBatches query (no alias: branch)
+    let branchFilter = '';
+    let branchFilterFB = '';
+    if (branches) {
+      const branchList = branches.split(',').map(b => b.trim()).filter(Boolean);
+      if (branchList.length === 1) {
+        request.input('branch', sql.NVarChar, branchList[0]);
+        branchFilter   = 'AND s.branch = @branch';
+        branchFilterFB = 'AND branch = @branch';
+      } else if (branchList.length > 1) {
+        const placeholders = branchList.map((b, i) => {
+          request.input(`branch${i}`, sql.NVarChar, b);
+          return `@branch${i}`;
+        }).join(',');
+        branchFilter   = `AND s.branch IN (${placeholders})`;
+        branchFilterFB = `AND branch IN (${placeholders})`;
+      }
+    }
+
+    let itemTypeFilter = '';
+    if (itemType) {
+      request.input('itemType', sql.NVarChar, itemType);
+      itemTypeFilter = 'AND i.itemType = @itemType';
+    }
+
+    // Single SQL call for the entire date range (replaces N×M loop)
+    const stocksResult = await request.query(`
+      SELECT
+        s.date, s.branch, s.itemCode,
+        s.added, s.returned, s.transferred, s.sold,
+        i.name as itemName, i.category, i.itemType,
+        COALESCE(
+          (SELECT TOP 1 ph.price
+           FROM ItemPriceHistory ph
+           WHERE ph.itemCode = s.itemCode AND ph.effectiveFrom <= s.date
+           ORDER BY ph.effectiveFrom DESC),
+          i.price
+        ) as price
+      FROM Stocks s
+      INNER JOIN Items i ON s.itemCode = i.code
+      WHERE s.date >= @dateFrom AND s.date <= @dateTo
+      ${branchFilter}
+      ${itemTypeFilter}
+      ORDER BY s.date, s.branch, i.name
+    `);
+
+    // BUG FIX: mssql request objects can only execute ONE .query() call.
+    // Create a fresh request for the FinishedBatches query with parameters re-bound.
+    const finishedRequest = pool.request()
+      .input('dateFrom', sql.Date, dateFrom)
+      .input('dateTo', sql.Date, dateTo);
+
+    if (branches) {
+      const branchList = branches.split(',').map(b => b.trim()).filter(Boolean);
+      if (branchList.length === 1) {
+        finishedRequest.input('branch', sql.NVarChar, branchList[0]);
+      } else if (branchList.length > 1) {
+        branchList.forEach((b, i) => finishedRequest.input(`branch${i}`, sql.NVarChar, b));
+      }
+    }
+
+    // Get finished batches for the range (Normal Items)
+    const finishedResult = await finishedRequest.query(`
+      SELECT date, branch, finishedAt
+      FROM FinishedBatches
+      WHERE date >= @dateFrom AND date <= @dateTo
+      AND itemType = 'Normal Item'
+      ${branchFilterFB}
+    `);
+
+
+
+    // Build a lookup map: "YYYY-MM-DD|branch" => isFinished
+    const finishedMap = {};
+    for (const fb of finishedResult.recordset) {
+      const key = `${fb.date instanceof Date ? fb.date.toISOString().split('T')[0] : fb.date}|${fb.branch}`;
+      finishedMap[key] = true;
+    }
+
+    // Group stocks by date+branch, attach isFinished flag
+    const grouped = {};
+    for (const s of stocksResult.recordset) {
+      const dateStr = s.date instanceof Date ? s.date.toISOString().split('T')[0] : s.date;
+      const key = `${dateStr}|${s.branch}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          date: dateStr,
+          branch: s.branch,
+          isFinished: !!finishedMap[key],
+          stocks: []
+        };
+      }
+      grouped[key].stocks.push({
+        itemCode: s.itemCode,
+        itemName: s.itemName,
+        category: s.category,
+        price: parseFloat(s.price || 0),
+        itemType: s.itemType,
+        added: s.added || 0,
+        returned: s.returned || 0,
+        transferred: s.transferred || 0,
+        sold: s.sold || 0,
+        available: Math.max(0, (s.added || 0) - (s.returned || 0) - (s.transferred || 0))
+      });
+    }
+
+    res.json({ success: true, data: Object.values(grouped) });
+  } catch (error) {
+    console.error('Get stocks range error:', error);
+    res.status(500).json({ success: false, message: 'Error fetching stocks range' });
+  }
+};
+
 module.exports = {
   getStocks,
   getBatchStatus,
   updateStocks,
   finishBatch,
-  updateReturns
+  updateReturns,
+  getStocksRange
 };
 

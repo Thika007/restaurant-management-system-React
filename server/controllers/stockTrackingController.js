@@ -10,7 +10,7 @@ const getStockTracking = async (req, res) => {
 
     const pool = await getConnection();
 
-    // Query grocery items with their current stock (excluding expired batches)
+    // Query grocery items with their current stock (including expired batches since they are physically present)
     const result = await pool.request()
       .input('branch', sql.NVarChar, branch)
       .input('category', sql.NVarChar, category || null)
@@ -21,11 +21,7 @@ const getStockTracking = async (req, res) => {
           i.category,
           i.minQty,
           i.maxQty,
-          ISNULL(SUM(CASE 
-            WHEN gs.expiryDate IS NULL OR gs.expiryDate >= CAST(GETDATE() AS DATE) 
-            THEN gs.remaining 
-            ELSE 0 
-          END), 0) AS currentQty
+          ISNULL(SUM(gs.remaining), 0) AS currentQty
         FROM Items i
         LEFT JOIN GroceryStocks gs ON gs.itemCode = i.code AND gs.branch = @branch
         WHERE i.itemType = 'Grocery Item'
