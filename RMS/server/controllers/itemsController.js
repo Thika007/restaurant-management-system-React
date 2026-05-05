@@ -49,7 +49,7 @@ const generateItemCode = async (pool) => {
 
 const createItem = async (req, res) => {
   try {
-    const { itemType, name, category, subcategory, price, description, soldByWeight, notifyExpiry, minQty, maxQty } = req.body;
+    const { itemType, name, category, subcategory, price, description, soldByWeight, notifyExpiry, minQty, maxQty, expireTimeDuration, expireTimeUnit } = req.body;
 
     if (!itemType || !name || !category || !price) {
       return res.status(400).json({ success: false, message: 'Required fields missing' });
@@ -86,6 +86,10 @@ const createItem = async (req, res) => {
     const finalMinQty = (itemType === 'Grocery Item' && minQty != null && minQty !== '') ? parseFloat(minQty) : null;
     const finalMaxQty = (itemType === 'Grocery Item' && maxQty != null && maxQty !== '') ? parseFloat(maxQty) : null;
 
+    // Prepare expireTimeDuration and expireTimeUnit - only for Grocery Items
+    const finalExpireTimeDuration = (itemType === 'Grocery Item' && expireTimeDuration != null && expireTimeDuration !== '') ? parseInt(expireTimeDuration) : null;
+    const finalExpireTimeUnit = (itemType === 'Grocery Item' && expireTimeUnit && expireTimeUnit !== '') ? expireTimeUnit : null;
+
     await pool.request()
       .input('code', sql.NVarChar, code)
       .input('itemType', sql.NVarChar, itemType)
@@ -98,9 +102,11 @@ const createItem = async (req, res) => {
       .input('notifyExpiry', sql.Bit, notifyExpiry || false)
       .input('minQty', sql.Decimal(18, 3), finalMinQty)
       .input('maxQty', sql.Decimal(18, 3), finalMaxQty)
+      .input('expireTimeDuration', sql.Int, finalExpireTimeDuration)
+      .input('expireTimeUnit', sql.NVarChar, finalExpireTimeUnit)
       .query(`
-        INSERT INTO Items (code, itemType, name, category, subcategory, price, description, soldByWeight, notifyExpiry, minQty, maxQty)
-        VALUES (@code, @itemType, @name, @category, @subcategory, @price, @description, @soldByWeight, @notifyExpiry, @minQty, @maxQty)
+        INSERT INTO Items (code, itemType, name, category, subcategory, price, description, soldByWeight, notifyExpiry, minQty, maxQty, expireTimeDuration, expireTimeUnit)
+        VALUES (@code, @itemType, @name, @category, @subcategory, @price, @description, @soldByWeight, @notifyExpiry, @minQty, @maxQty, @expireTimeDuration, @expireTimeUnit)
       `);
 
     // Save initial price to ItemPriceHistory (effectiveFrom = today)
@@ -137,7 +143,7 @@ const createItem = async (req, res) => {
 const updateItem = async (req, res) => {
   try {
     const { code } = req.params;
-    const { name, category, subcategory, price, description, soldByWeight, notifyExpiry, minQty, maxQty } = req.body;
+    const { name, category, subcategory, price, description, soldByWeight, notifyExpiry, minQty, maxQty, expireTimeDuration, expireTimeUnit } = req.body;
 
     if (!name || !price) {
       return res.status(400).json({ success: false, message: 'Required fields missing' });
@@ -194,6 +200,10 @@ const updateItem = async (req, res) => {
     const finalMinQty = (itemType === 'Grocery Item' && minQty != null && minQty !== '') ? parseFloat(minQty) : null;
     const finalMaxQty = (itemType === 'Grocery Item' && maxQty != null && maxQty !== '') ? parseFloat(maxQty) : null;
 
+    // Prepare expireTimeDuration and expireTimeUnit - only for Grocery Items
+    const finalExpireTimeDuration = (itemType === 'Grocery Item' && expireTimeDuration != null && expireTimeDuration !== '') ? parseInt(expireTimeDuration) : null;
+    const finalExpireTimeUnit = (itemType === 'Grocery Item' && expireTimeUnit && expireTimeUnit !== '') ? expireTimeUnit : null;
+
     await pool.request()
       .input('code', sql.NVarChar, code)
       .input('name', sql.NVarChar, name)
@@ -205,12 +215,15 @@ const updateItem = async (req, res) => {
       .input('notifyExpiry', sql.Bit, notifyExpiry || false)
       .input('minQty', sql.Decimal(18, 3), finalMinQty)
       .input('maxQty', sql.Decimal(18, 3), finalMaxQty)
+      .input('expireTimeDuration', sql.Int, finalExpireTimeDuration)
+      .input('expireTimeUnit', sql.NVarChar, finalExpireTimeUnit)
       .query(`
         UPDATE Items 
         SET name = @name, category = @category, subcategory = @subcategory, 
             price = @price, description = @description, 
             soldByWeight = @soldByWeight, notifyExpiry = @notifyExpiry,
             minQty = @minQty, maxQty = @maxQty,
+            expireTimeDuration = @expireTimeDuration, expireTimeUnit = @expireTimeUnit,
             updatedAt = GETDATE()
         WHERE code = @code
       `);

@@ -38,7 +38,9 @@ const Inventory = () => {
     soldByWeight: false,
     notifyExpiry: false,
     minQty: '',
-    maxQty: ''
+    maxQty: '',
+    expireTimeDuration: '',
+    expireTimeUnit: 'days'
   });
 
   // Categories for Normal Items
@@ -107,7 +109,9 @@ const Inventory = () => {
       soldByWeight: false,
       notifyExpiry: false,
       minQty: '',
-      maxQty: ''
+      maxQty: '',
+      expireTimeDuration: '',
+      expireTimeUnit: 'days'
     });
   };
 
@@ -158,6 +162,11 @@ const Inventory = () => {
         if (itemData.minQty != null && itemData.maxQty != null && itemData.minQty > itemData.maxQty) {
           showWarning('Min QTY cannot be greater than Max QTY.');
           return;
+        }
+        // Add expire time duration if provided
+        if (formData.expireTimeDuration && formData.expireTimeDuration !== '') {
+          itemData.expireTimeDuration = parseInt(formData.expireTimeDuration);
+          itemData.expireTimeUnit = formData.expireTimeUnit || 'days';
         }
       } else if (itemType === 'Machine') {
         if (!itemData.name || !itemData.price || itemData.price <= 0) {
@@ -210,7 +219,9 @@ const Inventory = () => {
         soldByWeight: item.soldByWeight || false,
         notifyExpiry: item.notifyExpiry || false,
         minQty: item.minQty != null ? item.minQty.toString() : '',
-        maxQty: item.maxQty != null ? item.maxQty.toString() : ''
+        maxQty: item.maxQty != null ? item.maxQty.toString() : '',
+        expireTimeDuration: item.expireTimeDuration != null ? item.expireTimeDuration.toString() : '',
+        expireTimeUnit: item.expireTimeUnit || 'days'
       });
       setItemType('Grocery Item');
       setShowEditGroceryModal(true);
@@ -264,6 +275,14 @@ const Inventory = () => {
         if (updateData.minQty != null && updateData.maxQty != null && updateData.minQty > updateData.maxQty) {
           showWarning('Min QTY cannot be greater than Max QTY.');
           return;
+        }
+        // Add expire time duration if provided
+        if (formData.expireTimeDuration && formData.expireTimeDuration !== '') {
+          updateData.expireTimeDuration = parseInt(formData.expireTimeDuration);
+          updateData.expireTimeUnit = formData.expireTimeUnit || 'days';
+        } else {
+          updateData.expireTimeDuration = null;
+          updateData.expireTimeUnit = null;
         }
       } else if (editingItem.itemType === 'Machine') {
         if (!updateData.name || !updateData.price || updateData.price <= 0) {
@@ -335,7 +354,9 @@ const Inventory = () => {
       soldByWeight: false,
       notifyExpiry: false,
       minQty: '',
-      maxQty: ''
+      maxQty: '',
+      expireTimeDuration: '',
+      expireTimeUnit: 'days'
     });
     setEditingItem(null);
   };
@@ -723,6 +744,41 @@ const Inventory = () => {
                         <div className="form-text">Maximum quantity for stock tracking</div>
                       </div>
                     </div>
+                    <div className="mb-3">
+                      <label className="form-label fw-bold">
+                        <i className="fas fa-clock me-1"></i> Expire Time Duration
+                      </label>
+                      <div className="row g-2">
+                        <div className="col-md-6">
+                          <input
+                            type="number"
+                            className="form-control"
+                            name="expireTimeDuration"
+                            value={formData.expireTimeDuration}
+                            onChange={handleInputChange}
+                            placeholder="e.g., 7"
+                            min="1"
+                            step="1"
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <select
+                            className="form-select"
+                            name="expireTimeUnit"
+                            value={formData.expireTimeUnit}
+                            onChange={handleInputChange}
+                          >
+                            <option value="days">Days</option>
+                            <option value="months">Months</option>
+                            <option value="years">Years</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="form-text">
+                        <i className="fas fa-info-circle me-1"></i>
+                        Set the shelf life of this item. When adding stock, the expiry date will be auto-calculated based on this duration.
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -1010,6 +1066,41 @@ const Inventory = () => {
                       step="0.001"
                     />
                     <div className="form-text">Maximum quantity for stock tracking</div>
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label className="form-label fw-bold">
+                    <i className="fas fa-clock me-1"></i> Expire Time Duration
+                  </label>
+                  <div className="row g-2">
+                    <div className="col-md-6">
+                      <input
+                        type="number"
+                        className="form-control"
+                        name="expireTimeDuration"
+                        value={formData.expireTimeDuration}
+                        onChange={handleInputChange}
+                        placeholder="e.g., 7"
+                        min="1"
+                        step="1"
+                      />
+                    </div>
+                    <div className="col-md-6">
+                      <select
+                        className="form-select"
+                        name="expireTimeUnit"
+                        value={formData.expireTimeUnit}
+                        onChange={handleInputChange}
+                      >
+                        <option value="days">Days</option>
+                        <option value="months">Months</option>
+                        <option value="years">Years</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-text">
+                    <i className="fas fa-info-circle me-1"></i>
+                    Set the shelf life of this item. When adding stock, the expiry date will be auto-calculated.
                   </div>
                 </div>
               </div>

@@ -63,6 +63,43 @@ app.use((err, req, res, next) => {
 app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   
+  // One-time migration: add expireTimeDuration & expireTimeUnit columns to Items table
+  // Uses a marker file so this only runs ONCE, not on every startup.
+  const migrationMarker = path.join(__dirname, '.migration-expire-duration-done');
+  const fs = require('fs');
+  if (!fs.existsSync(migrationMarker)) {
+    setTimeout(async () => {
+      try {
+        const { getConnection } = require('./config/db');
+        const pool = await getConnection();
+        
+        const checkResult = await pool.request().query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'Items' 
+            AND COLUMN_NAME IN ('expireTimeDuration', 'expireTimeUnit')
+        `);
+        const existingColumns = checkResult.recordset.map(r => r.COLUMN_NAME);
+
+        if (!existingColumns.includes('expireTimeDuration')) {
+          await pool.request().query('ALTER TABLE Items ADD expireTimeDuration INT NULL');
+          console.log('[Migration] Added expireTimeDuration column to Items table');
+        }
+        if (!existingColumns.includes('expireTimeUnit')) {
+          await pool.request().query("ALTER TABLE Items ADD expireTimeUnit NVARCHAR(10) NULL");
+          console.log('[Migration] Added expireTimeUnit column to Items table');
+        }
+
+        // Mark migration as done so it won't run again
+        fs.writeFileSync(migrationMarker, new Date().toISOString());
+        console.log('[Migration] Expire duration migration completed successfully.');
+      } catch (migrationError) {
+        console.error('[Migration] Error adding expire duration columns:', migrationError.message);
+        // Don't create marker file on error so it retries next startup
+      }
+    }, 2000);
+  }
+
   // Clean up existing notification messages on server startup
   setTimeout(async () => {
     try {

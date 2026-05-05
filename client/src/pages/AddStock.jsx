@@ -269,10 +269,39 @@ const AddStock = () => {
     }
   };
 
+  // Calculate expiry date based on item's expire time duration
+  const calculateExpiryDate = (baseDate, duration, unit) => {
+    if (!duration || !unit) return '';
+    const date = new Date(baseDate + 'T00:00:00');
+    if (isNaN(date.getTime())) return '';
+    
+    switch (unit) {
+      case 'days':
+        date.setDate(date.getDate() + parseInt(duration));
+        break;
+      case 'months':
+        date.setMonth(date.getMonth() + parseInt(duration));
+        break;
+      case 'years':
+        date.setFullYear(date.getFullYear() + parseInt(duration));
+        break;
+      default:
+        return '';
+    }
+    return date.toISOString().split('T')[0];
+  };
+
   // Handle grocery stock modal
   const handleShowGroceryModal = (item) => {
     setSelectedGroceryItem(item);
-    setGroceryFormData({ quantity: '', expiryDate: '', addedDate: stockDate });
+    
+    // Auto-calculate expiry date if item has expire time duration set
+    let autoExpiryDate = '';
+    if (item.expireTimeDuration && item.expireTimeUnit) {
+      autoExpiryDate = calculateExpiryDate(stockDate, item.expireTimeDuration, item.expireTimeUnit);
+    }
+    
+    setGroceryFormData({ quantity: '', expiryDate: autoExpiryDate, addedDate: stockDate });
     setShowGroceryModal(true);
   };
 
@@ -1128,6 +1157,14 @@ const AddStock = () => {
                   <label className="form-label">
                     <strong>Item:</strong> {selectedGroceryItem.name}
                   </label>
+                  {selectedGroceryItem.expireTimeDuration && selectedGroceryItem.expireTimeUnit && (
+                    <div className="mt-1">
+                      <span className="badge bg-info text-dark">
+                        <i className="fas fa-clock me-1"></i>
+                        Shelf Life: {selectedGroceryItem.expireTimeDuration} {selectedGroceryItem.expireTimeUnit}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="mb-3">
                   <label className="form-label">Quantity</label>
@@ -1148,7 +1185,14 @@ const AddStock = () => {
                   />
                 </div>
                 <div className="mb-3">
-                  <label className="form-label">Expiry Date</label>
+                  <label className="form-label">
+                    Expiry Date
+                    {selectedGroceryItem.expireTimeDuration && selectedGroceryItem.expireTimeUnit && groceryFormData.expiryDate && (
+                      <span className="badge bg-success ms-2" style={{ fontSize: '0.7rem' }}>
+                        <i className="fas fa-magic me-1"></i>Auto-calculated
+                      </span>
+                    )}
+                  </label>
                   <input
                     type="date"
                     className="form-control"
@@ -1159,6 +1203,12 @@ const AddStock = () => {
                     })}
                     required
                   />
+                  {selectedGroceryItem.expireTimeDuration && selectedGroceryItem.expireTimeUnit && (
+                    <div className="form-text text-success">
+                      <i className="fas fa-info-circle me-1"></i>
+                      Auto-set based on {selectedGroceryItem.expireTimeDuration} {selectedGroceryItem.expireTimeUnit} shelf life. You can still change it manually.
+                    </div>
+                  )}
                 </div>
                 <div className="mb-3">
                   <label className="form-label">Added Date</label>
@@ -1166,10 +1216,21 @@ const AddStock = () => {
                     type="date"
                     className="form-control"
                     value={groceryFormData.addedDate || ''}
-                    onChange={(e) => setGroceryFormData({
-                      ...groceryFormData,
-                      addedDate: e.target.value
-                    })}
+                    onChange={(e) => {
+                      const newAddedDate = e.target.value;
+                      let newExpiryDate = groceryFormData.expiryDate;
+                      
+                      // Auto-recalculate expiry date when added date changes (if item has expire duration)
+                      if (selectedGroceryItem.expireTimeDuration && selectedGroceryItem.expireTimeUnit && newAddedDate) {
+                        newExpiryDate = calculateExpiryDate(newAddedDate, selectedGroceryItem.expireTimeDuration, selectedGroceryItem.expireTimeUnit);
+                      }
+                      
+                      setGroceryFormData({
+                        ...groceryFormData,
+                        addedDate: newAddedDate,
+                        expiryDate: newExpiryDate
+                      });
+                    }}
                     required
                   />
                 </div>

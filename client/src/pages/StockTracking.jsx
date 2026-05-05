@@ -15,7 +15,7 @@ const StockTracking = () => {
   const [groceryItems, setGroceryItems] = useState([]);
   
   // Filter states
-  const [selectedBranch, setSelectedBranch] = useState('');
+  const [selectedBranch, setSelectedBranch] = useState('All');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('All');
 
@@ -301,7 +301,7 @@ const StockTracking = () => {
                 onChange={(e) => setSelectedBranch(e.target.value)}
                 required
               >
-                <option value="">Select Branch</option>
+                <option value="All">All Branches</option>
                 {getAvailableBranches().map(branch => (
                   <option key={branch.name} value={branch.name}>
                     {branch.name}

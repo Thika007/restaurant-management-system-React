@@ -9,30 +9,32 @@ const getStockTracking = async (req, res) => {
     }
 
     const pool = await getConnection();
+    const isAllBranches = !branch || branch === 'All';
 
-    // Query grocery items with their current stock (excluding expired batches)
-    const result = await pool.request()
-      .input('branch', sql.NVarChar, branch)
-      .input('category', sql.NVarChar, category || null)
-      .query(`
+    // Query grocery items with their current stock (including expired batches since they are physically present)
+    let queryStr = `
         SELECT 
           i.code,
           i.name,
           i.category,
           i.minQty,
           i.maxQty,
-          ISNULL(SUM(CASE 
-            WHEN gs.expiryDate IS NULL OR gs.expiryDate >= CAST(GETDATE() AS DATE) 
-            THEN gs.remaining 
-            ELSE 0 
-          END), 0) AS currentQty
+          ISNULL(SUM(gs.remaining), 0) AS currentQty
         FROM Items i
-        LEFT JOIN GroceryStocks gs ON gs.itemCode = i.code AND gs.branch = @branch
+        LEFT JOIN GroceryStocks gs ON gs.itemCode = i.code ${isAllBranches ? '' : 'AND gs.branch = @branch'}
         WHERE i.itemType = 'Grocery Item'
           AND (@category IS NULL OR i.category = @category)
         GROUP BY i.code, i.name, i.category, i.minQty, i.maxQty
         ORDER BY currentQty ASC, i.name ASC
-      `);
+    `;
+
+    const request = pool.request();
+    if (!isAllBranches) {
+      request.input('branch', sql.NVarChar, branch);
+    }
+    request.input('category', sql.NVarChar, category || null);
+
+    const result = await request.query(queryStr);
 
     // Calculate status for each item
     const items = result.recordset.map(item => {
@@ -59,7 +61,7 @@ const getStockTracking = async (req, res) => {
         minQty: minQty,
         maxQty: maxQty,
         status: status,
-        branch: branch
+        branch: isAllBranches ? 'All Branches' : branch
       };
     });
 
