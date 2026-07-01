@@ -419,7 +419,7 @@ const Reports = () => {
   };
 
   const generateAddedItemsReport = async () => {
-    const head = ['Date', 'Branch', 'Item Name', 'Type', 'Added', 'Returned', 'Transferred'];
+    const head = ['Branch', 'Item Name', 'Type', 'Added', 'Returned', 'Transferred'];
     setTableHead(head);
 
     const body = [];
@@ -439,22 +439,37 @@ const Reports = () => {
 
           if (rangeRes.data.success) {
             const normalItems = items.filter(i => i.itemType === 'Normal Item');
+            const normalAgg = {}; // Key format: `${branch}|${itemCode}`
+
             for (const group of rangeRes.data.data || []) {
-              const { date, branch, stocks: stockList } = group;
+              const { branch, stocks: stockList } = group;
               for (const stock of stockList || []) {
                 const item = normalItems.find(i => i.code === stock.itemCode);
                 if (!item) continue;
                 if (itemFilter && item.name !== itemFilter) continue;
                 if (itemTypeFilter && item.itemType !== itemTypeFilter) continue;
 
-                const added = stock.added || 0;
-                const returned = stock.returned || 0;
-                const transferred = stock.transferred || 0;
-                const available = Math.max(0, added - returned - transferred);
-
-                if (added > 0 || returned > 0 || transferred > 0 || available > 0) {
-                  body.push([date, branch, item.name, 'Normal Item', added, returned, transferred]);
+                const key = `${branch}|${stock.itemCode}`;
+                if (!normalAgg[key]) {
+                  normalAgg[key] = {
+                    branch,
+                    itemName: item.name,
+                    added: 0,
+                    returned: 0,
+                    transferred: 0
+                  };
                 }
+
+                normalAgg[key].added += stock.added || 0;
+                normalAgg[key].returned += stock.returned || 0;
+                normalAgg[key].transferred += stock.transferred || 0;
+              }
+            }
+
+            for (const row of Object.values(normalAgg)) {
+              const available = Math.max(0, row.added - row.returned - row.transferred);
+              if (row.added > 0 || row.returned > 0 || row.transferred > 0 || available > 0) {
+                body.push([row.branch, row.itemName, 'Normal Item', row.added, row.returned, row.transferred]);
               }
             }
           }
@@ -464,7 +479,7 @@ const Reports = () => {
       }
 
 
-      // Grocery Items - aggregate by date|branch|itemCode
+      // Grocery Items - aggregate by branch|itemCode
       const groceryAgg = {};
 
       // Get grocery stocks (added) - include ALL grocery stock additions
@@ -499,10 +514,9 @@ const Reports = () => {
                 (!dateFrom || stockDate >= dateFrom) &&
                 (!dateTo || stockDate <= dateTo)
               ) {
-                const keyAgg = `${stockDate}|${stock.branch}|${stock.itemCode}`;
+                const keyAgg = `${stock.branch}|${stock.itemCode}`;
                 if (!groceryAgg[keyAgg]) {
                   groceryAgg[keyAgg] = {
-                    date: stockDate,
                     branch: stock.branch,
                     itemCode: stock.itemCode,
                     added: 0,
@@ -530,11 +544,9 @@ const Reports = () => {
 
         if (groceryReturnsRes.data.success) {
           for (const ret of groceryReturnsRes.data.returns || []) {
-            const normalizedDate = formatDateOnly(ret.date);
-            const keyAgg = `${normalizedDate}|${ret.branch}|${ret.itemCode}`;
+            const keyAgg = `${ret.branch}|${ret.itemCode}`;
             if (!groceryAgg[keyAgg]) {
               groceryAgg[keyAgg] = {
-                date: normalizedDate,
                 branch: ret.branch,
                 itemCode: ret.itemCode,
                 added: 0,
@@ -570,11 +582,9 @@ const Reports = () => {
             const transferItems = Array.isArray(transfer.items) ? transfer.items : [];
             for (const item of transferItems) {
               // Sender: count as transferred (negative)
-              const normalizedDate = formatDateOnly(transfer.date);
-              const senderKey = `${normalizedDate}|${transfer.senderBranch}|${item.itemCode}`;
+              const senderKey = `${transfer.senderBranch}|${item.itemCode}`;
               if (!groceryAgg[senderKey]) {
                 groceryAgg[senderKey] = {
-                  date: normalizedDate,
                   branch: transfer.senderBranch,
                   itemCode: item.itemCode,
                   added: 0,
@@ -585,10 +595,9 @@ const Reports = () => {
               groceryAgg[senderKey].transferred += parseFloat(item.quantity || 0);
 
               // Receiver: count as added (positive)
-              const receiverKey = `${normalizedDate}|${transfer.receiverBranch}|${item.itemCode}`;
+              const receiverKey = `${transfer.receiverBranch}|${item.itemCode}`;
               if (!groceryAgg[receiverKey]) {
                 groceryAgg[receiverKey] = {
-                  date: normalizedDate,
                   branch: transfer.receiverBranch,
                   itemCode: item.itemCode,
                   added: 0,
@@ -628,7 +637,6 @@ const Reports = () => {
           const transferredDisplay = item.soldByWeight ? Number(row.transferred || 0).toFixed(3) : Math.round(row.transferred || 0);
 
           body.push([
-            formatDateOnly(row.date),
             row.branch,
             `${item.name} (Grocery)`,
             'Grocery Item',
@@ -640,11 +648,11 @@ const Reports = () => {
 
     } catch (error) {
       console.error('Error generating added items report:', error);
-      body.push({ cells: ['Error loading added items data.'], colSpan: 7 });
+      body.push({ cells: ['Error loading added items data.'], colSpan: 6 });
     }
 
     if (body.length === 0) {
-      body.push({ cells: ['No added items data available.'], colSpan: 7 });
+      body.push({ cells: ['No added items data available.'], colSpan: 6 });
     }
 
     setTableBody(body);
@@ -964,10 +972,58 @@ const Reports = () => {
   };
 
   const exportExcel = () => {
-    const table = document.getElementById('reportTable');
-    if (!table) return;
+    if (!tableHead || tableHead.length === 0) {
+      showWarning('No data to export. Please generate a report first.');
+      return;
+    }
 
-    const wb = XLSX.utils.table_to_book(table, { sheet: 'Report' });
+    const head = tableHead;
+    const body = [];
+
+    tableBody.forEach(row => {
+      if (row.isTotal) {
+        // Total row - ensure it has correct length
+        const totalRow = [...row.cells];
+        while (totalRow.length < head.length) {
+          totalRow.unshift('');
+        }
+        body.push(totalRow);
+      } else if (row.colSpan) {
+        // Message row - convert to single cell spanning all columns
+        const messageRow = [row.cells[0] || ''];
+        for (let i = 1; i < head.length; i++) {
+          messageRow.push('');
+        }
+        body.push(messageRow);
+      } else if (Array.isArray(row)) {
+        // Regular row
+        body.push(row);
+      }
+    });
+
+    // Create worksheet from array of arrays
+    const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+
+    // Autofit column widths
+    const maxCols = head.length;
+    const colWidths = [];
+    for (let c = 0; c < maxCols; c++) {
+      let maxLen = head[c]?.toString().length || 10;
+      body.forEach(row => {
+        const cellValue = row[c];
+        if (cellValue !== undefined && cellValue !== null) {
+          const len = cellValue.toString().length;
+          if (len > maxLen) {
+            maxLen = len;
+          }
+        }
+      });
+      colWidths.push({ wch: maxLen + 3 }); // Add extra padding
+    }
+    ws['!cols'] = colWidths;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Report');
     XLSX.writeFile(wb, `report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
